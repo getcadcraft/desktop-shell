@@ -1,0 +1,36 @@
+{
+  "_comment": "Desktop-only facts per app (names and versions come from the edition's release.json). Files: own = our own format, the app becomes its default; polite = the default only when no other program has claimed the type; openWith = listed in Explorer's Open with, never the default (docs/0.4-PART2.md W.4).",
+  "cadcraft": {
+    "files": { "own": ["ccsheets"], "polite": ["dwg", "dxf"], "openWith": ["pln", "pla", "tpl", "bpn"] }
+  },
+  "bimcraft": {
+    "files": { "own": [], "polite": ["ifc"], "openWith": ["rvt", "rfa", "rte", "rft", "dwg", "dxf", "bcf", "bcfzip"] }
+  },
+  "modelcraft": {
+    "files": { "own": ["modelcraft"], "polite": [], "openWith": ["dae", "obj", "glb", "gltf", "dwg", "dxf"] }
+  },
+  "markupcraft": {
+    "files": { "own": [], "polite": [], "openWith": ["pdf"] }
+  },
+  "takeoffcraft": {
+    "files": { "own": [], "polite": [], "openWith": ["pdf"] }
+  },
+  "civilcraft": {
+    "files": { "own": [], "polite": ["landxml"], "openWith": ["xml", "geojson", "kml", "kmz", "shp", "gpkg", "las", "laz", "dwg", "dxf"] }
+  },
+  "detailcraft": {
+    "files": { "own": [], "polite": [], "openWith": ["ifc"] }
+  },
+  "partcraft": {
+    "files": { "own": [], "polite": [], "openWith": ["step", "stp"] }
+  },
+  "_types": {
+    "ccsheets": "CadCraft sheet set", "dwg": "DWG drawing", "dxf": "DXF drawing", "pln": "PLN project",
+    "pla": "PLA archive", "tpl": "TPL template", "bpn": "BPN backup", "ifc": "IFC model",
+    "rvt": "RVT model", "rfa": "RFA family", "rte": "RTE template", "rft": "RFT family template",
+    "bcf": "BCF issues", "bcfzip": "BCF issues", "modelcraft": "ModelCraft model", "dae": "COLLADA model",
+    "obj": "OBJ model", "glb": "glTF model", "gltf": "glTF model", "pdf": "PDF document", "landxml": "LandXML file",
+    "xml": "XML file", "geojson": "GeoJSON file", "kml": "KML file", "kmz": "KMZ file", "shp": "Shapefile",
+    "gpkg": "GeoPackage", "las": "LAS point cloud", "laz": "LAZ point cloud", "step": "STEP model", "stp": "STEP model"
+  }
+}

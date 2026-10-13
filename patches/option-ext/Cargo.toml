@@ -1,0 +1,10 @@
+[package]
+name = "option-ext"
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "CadCraft's own stand-in for the MPL-2.0 option-ext crate: only Option::contains, which dirs-sys uses (written from the call site, not from that crate's source), so no MPL code ships in the desktop shell (docs/0.4-PART2.md L.2)."
+publish = false
+
+[lib]
+path = "src/lib.rs"

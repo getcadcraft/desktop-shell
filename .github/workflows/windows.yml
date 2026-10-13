@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# Windows installers (docs/0.4-PART2.md W.5, W.6): one app's released browser edition → NSIS .exe (per user, no admin)
+# + MSI (IT departments), built natively on Windows, signed when the signing secrets exist, with real SHA-256s.
+# Run by hand (Actions › Windows installers › Run workflow). Nothing here publishes a release: the artifacts are
+# downloaded and attached on the owner's go.
+name: Windows installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App slug (cadcraft, bimcraft, modelcraft, markupcraft, takeoffcraft, civilcraft, detailcraft, partcraft)
+        required: true
+      version:
+        description: Edition release, e.g. 0.4 (downloads getcadcraft/<app> release <app>-v<version>.0)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+      - name: Bridge test (host.js half skipped here; it runs where the site is)
+        run: node test/bridge.test.mjs
+      - name: License gate (shipped crates)
+        run: node licenses.mjs --target x86_64-pc-windows-msvc
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Tools
+        run: |
+          pip install pillow
+          cargo install tauri-cli --version "^2" --locked
+      - name: Get the edition (and check its published checksum)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          app='${{ inputs.app }}'; v='${{ inputs.version }}'
+          tag="$app-v$v.0"; zip="$app-browser-edition-v$v.0.zip"
+          gh release download "$tag" --repo "getcadcraft/$app" --pattern "$zip" --pattern SHA256SUMS --dir edition
+          (cd edition && grep " $zip\$" SHA256SUMS | sha256sum -c -)
+      - name: Build (NSIS + MSI)
+        shell: bash
+        env:
+          # W.6: set these secrets once the owner picks a certificate or Azure Trusted Signing (decision 9).
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          CC_SIGN_ENDPOINT: ${{ secrets.CC_SIGN_ENDPOINT }}
+          CC_SIGN_ACCOUNT: ${{ secrets.CC_SIGN_ACCOUNT }}
+          CC_SIGN_PROFILE: ${{ secrets.CC_SIGN_PROFILE }}
+          # W.7: updates stay off unless the owner sets these (decision 10 for CC_UPDATE_AUTO).
+          CC_UPDATE_PUBKEY: ${{ vars.CC_UPDATE_PUBKEY }}
+          CC_UPDATE_AUTO: ${{ vars.CC_UPDATE_AUTO }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$CC_SIGN_ACCOUNT" ]; then
+            cargo install trusted-signing-cli --locked
+            export CC_SIGN_COMMAND="trusted-signing-cli -e $CC_SIGN_ENDPOINT -a $CC_SIGN_ACCOUNT -c $CC_SIGN_PROFILE -d CadCraft %1"
+          else
+            echo "::warning::No signing secrets: the installers are unsigned (SmartScreen will warn)."
+          fi
+          node build.mjs '${{ inputs.app }}' --edition "edition/${{ inputs.app }}-browser-edition-v${{ inputs.version }}.0.zip"
+      - name: Check signatures
+        shell: pwsh
+        run: Get-ChildItem out\*.exe, out\*.msi | ForEach-Object { Get-AuthenticodeSignature $_.FullName | Format-List Path, Status, SignerCertificate }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.app }}-${{ inputs.version }}-windows
+          path: |
+            out/*.exe
+            out/*.msi
+            out/*-latest.json
+            out/SHA256SUMS

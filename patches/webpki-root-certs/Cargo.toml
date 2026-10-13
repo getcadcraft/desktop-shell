@@ -1,0 +1,10 @@
+[package]
+name = "webpki-root-certs"
+version = "1.0.9"
+edition = "2021"
+license = "Apache-2.0"
+description = "CadCraft's own empty stand-in for webpki-root-certs (a bundled CA list under CDLA-Permissive-2.0). The desktop shell verifies TLS with the operating system's trust store (ureq RootCerts::PlatformVerifier), so the list is never read; ureq 3 still names the crate when its native-tls feature is on."
+publish = false
+
+[dependencies]
+pki-types = { package = "rustls-pki-types", version = "1.8", default-features = false }

@@ -1,0 +1,9 @@
+/src-tauri/target/
+/src-tauri/gen/
+/patches/*/target/
+/stage/
+/out/
+node_modules/
+.env
+.env.*
+*.log
