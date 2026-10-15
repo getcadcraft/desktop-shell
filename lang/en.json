@@ -1,0 +1,38 @@
+{
+  "@locale": "en",
+  "@name": "English",
+  "@context": {
+    "desktop.account.waiting.left": "How long the short code on screen still works; {n} is whole minutes.",
+    "desktop.reason.offline_signout": "After Sign out when the website could not be reached: the sign-in was removed here, not on the website.",
+    "desktop.carry.text": "Studio's first start: the separate 0.4 apps' settings, recent files and recovery copies are copied into Studio (SD.8)."
+  },
+  "desktop.account.title": "Sign in to getcadcraft.com",
+  "desktop.account.signed_out.text": "Signing in lets this app open and save your cloud drawings. You get a short code here and approve it on the website, in your own browser. Nothing secret is typed or copied.",
+  "desktop.account.get_code": "Get a code",
+  "desktop.account.not_now": "Not now",
+  "desktop.account.waiting.title": "Approve this code on the website",
+  "desktop.account.waiting.text": "Your browser has opened getcadcraft.com/device. Check that it shows this code, then approve it.",
+  "desktop.account.waiting.own": "Only approve a code shown here, in your own app.",
+  "desktop.account.waiting.left": {
+    "=1": "The code works for 1 more minute.",
+    "one": "The code works for {n} more minute.",
+    "other": "The code works for {n} more minutes."
+  },
+  "desktop.account.waiting.out": "The code has run out.",
+  "desktop.account.open_device": "Open getcadcraft.com/device",
+  "desktop.account.cancel": "Cancel",
+  "desktop.account.signed_in.title": "Signed in",
+  "desktop.account.signed_in.who": "Signed in.",
+  "desktop.account.signed_in.text": "This computer stays signed in until you sign out here, or remove it on getcadcraft.com under Account, Security.",
+  "desktop.account.sign_out": "Sign out",
+  "desktop.account.done": "Done",
+  "desktop.account.only_desktop": "This window works only inside the CadCraft desktop app.",
+  "desktop.reason.throttled": "Too many codes in a short time. Try again in a few minutes.",
+  "desktop.reason.expired": "The code ran out before it was approved. Ask for a new one.",
+  "desktop.reason.denied": "The sign-in was turned down on the website.",
+  "desktop.reason.revoked": "This computer was signed out on getcadcraft.com. Sign in again to use your cloud drawings; nothing on this computer was lost.",
+  "desktop.reason.offline_signout": "Signed out on this computer. The website could not be reached: the sign-in is also listed on getcadcraft.com/account/security, where you can remove it.",
+  "desktop.reason.keystore": "This computer's credential store refused the sign-in.",
+  "desktop.carry.title": "Setting up CadCraft Studio",
+  "desktop.carry.text": "Bringing over your settings, recent files and recovery copies from the separate apps installed before."
+}

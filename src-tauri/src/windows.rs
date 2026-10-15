@@ -10,6 +10,10 @@
 //! start still go to the hub, which routes them by type. Each app's window place is kept (the last one closed sets the
 //! next one's), on a screen that is still there. Windows talk to each other over BroadcastChannel on the one origin.
 
+// Tablets (TB.1): one web view, so the bridge shows apps as views itself (bridge.js); only Suite (each view's own files
+// go through the bridge) is used there.
+#![cfg_attr(mobile, allow(dead_code, unused_imports))]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -81,6 +85,7 @@ fn valid_search(s: &str) -> bool {
     s.is_empty() || (s.starts_with('?') && s.len() <= 512 && s.bytes().all(|b| b.is_ascii_graphic() && b != b'#' && b != b'\\'))
 }
 
+#[cfg(desktop)]
 fn notify<R: Runtime>(app: &AppHandle<R>, kind: &str, id: &str) {
     if let Some(hub) = app.get_webview_window("main") {
         let ev = serde_json::json!({ "type": kind, "id": id });
@@ -88,6 +93,7 @@ fn notify<R: Runtime>(app: &AppHandle<R>, kind: &str, id: &str) {
     }
 }
 
+#[cfg(desktop)]
 fn place_of<R: Runtime>(w: &WebviewWindow<R>) -> Option<Place> {
     let maximized = w.is_maximized().unwrap_or(false);
     let (pos, size) = (w.outer_position().ok()?, w.inner_size().ok()?);
@@ -95,6 +101,7 @@ fn place_of<R: Runtime>(w: &WebviewWindow<R>) -> Option<Place> {
     Some(Place { x: pos.x, y: pos.y, w: (size.width as f64 / scale) as u32, h: (size.height as f64 / scale) as u32, maximized })
 }
 
+#[cfg(desktop)]
 #[derive(Deserialize)]
 pub struct OpenArgs {
     app: String,
@@ -104,12 +111,15 @@ pub struct OpenArgs {
     search: String,
 }
 
+#[cfg(desktop)]
 #[derive(Serialize)]
 pub struct Opened {
     id: String,
 }
 
-#[tauri::command]
+#[cfg(desktop)]
+// async: a window built from a sync command deadlocks WebView2 on Windows (blank window).
+#[tauri::command(async)]
 pub fn cc_windows_open<R: Runtime>(
     app: AppHandle<R>,
     caller: WebviewWindow<R>,
@@ -193,6 +203,7 @@ pub fn cc_windows_open<R: Runtime>(
     Ok(Opened { id: label })
 }
 
+#[cfg(desktop)]
 #[derive(Serialize)]
 pub struct Listed {
     id: String,
@@ -201,6 +212,7 @@ pub struct Listed {
     focused: bool,
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub fn cc_windows_list<R: Runtime>(app: AppHandle<R>, suite: State<'_, Suite>) -> Result<Vec<Listed>, String> {
     if !suite.on {
@@ -218,12 +230,14 @@ pub fn cc_windows_list<R: Runtime>(app: AppHandle<R>, suite: State<'_, Suite>) -
     Ok(out)
 }
 
+#[cfg(desktop)]
 fn focus<R: Runtime>(w: &WebviewWindow<R>) -> Result<(), String> {
     let _ = w.unminimize();
     let _ = w.show();
     w.set_focus().map_err(|e| e.to_string())
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub fn cc_windows_focus<R: Runtime>(app: AppHandle<R>, suite: State<'_, Suite>, id: String) -> Result<(), String> {
     if !suite.on {
@@ -235,6 +249,7 @@ pub fn cc_windows_focus<R: Runtime>(app: AppHandle<R>, suite: State<'_, Suite>, 
     focus(&app.get_webview_window(&id).ok_or("unknown window")?)
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub fn cc_windows_focus_hub<R: Runtime>(app: AppHandle<R>, suite: State<'_, Suite>) -> Result<(), String> {
     if !suite.on {

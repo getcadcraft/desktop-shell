@@ -1,5 +1,6 @@
 /src-tauri/target/
-/src-tauri/gen/
+/src-tauri/gen/schemas/
+/src-tauri/webview2
 /patches/*/target/
 /stage/
 /out/
@@ -7,3 +8,5 @@ node_modules/
 .env
 .env.*
 *.log
+/ios/.tauri/
+/ios/plugin/.build/

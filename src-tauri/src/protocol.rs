@@ -94,22 +94,105 @@ pub fn resolve(root: &Path, url_path: &str) -> Option<PathBuf> {
             _ => return None,
         }
     }
-    if p.is_dir() {
-        p.push("index.html");
+    if is_file(&p) {
+        return Some(p);
     }
-    p.is_file().then_some(p)
+    // A folder's own page (a path naming a folder, without the trailing slash).
+    p.push("index.html");
+    is_file(&p).then_some(p)
+}
+
+/// A file of the install, read whole: from disk, or on Android from the package's assets, where the suite ships
+/// (`app/…`, `shell.json`; read in place, never copied out).
+#[cfg(not(target_os = "android"))]
+pub fn read_source(p: &Path) -> Option<Vec<u8>> {
+    std::fs::read(p).ok()
+}
+#[cfg(not(target_os = "android"))]
+fn is_file(p: &Path) -> bool {
+    p.is_file()
+}
+#[cfg(target_os = "android")]
+pub fn read_source(p: &Path) -> Option<Vec<u8>> {
+    assets::read(p)
+}
+#[cfg(target_os = "android")]
+fn is_file(p: &Path) -> bool {
+    assets::exists(p)
+}
+
+/// Android: the APK's assets through the NDK's AssetManager (the application context's `getAssets()`, kept alive by a
+/// global reference). Paths are relative to the assets folder; folders are never "files".
+#[cfg(target_os = "android")]
+mod assets {
+    use ndk::asset::{Asset, AssetManager};
+    use std::ffi::CString;
+    use std::io::Read;
+    use std::path::Path;
+    use std::ptr::NonNull;
+    use std::sync::OnceLock;
+
+    struct Manager {
+        mgr: AssetManager,
+        _java: jni::objects::GlobalRef,
+    }
+
+    static MANAGER: OnceLock<Option<Manager>> = OnceLock::new();
+
+    fn manager() -> Option<&'static AssetManager> {
+        MANAGER
+            .get_or_init(|| {
+                let ctx = ndk_context::android_context();
+                // SAFETY: tao initialises ndk_context with the process's JavaVM and the application context (a global ref).
+                let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
+                let mut env = vm.attach_current_thread().ok()?;
+                let context = unsafe { jni::objects::JObject::from_raw(ctx.context().cast()) };
+                let java = env.call_method(&context, "getAssets", "()Landroid/content/res/AssetManager;", &[]).ok()?.l().ok()?;
+                let java = env.new_global_ref(java).ok()?;
+                // SAFETY: the Java AssetManager outlives the native one: we keep a global reference to it for the process.
+                let ptr = unsafe { ndk_sys::AAssetManager_fromJava(env.get_raw().cast(), java.as_obj().as_raw().cast()) };
+                let mgr = unsafe { AssetManager::from_ptr(NonNull::new(ptr)?) };
+                Some(Manager { mgr, _java: java })
+            })
+            .as_ref()
+            .map(|m| &m.mgr)
+    }
+
+    fn open(p: &Path) -> Option<Asset> {
+        manager()?.open(&CString::new(p.to_str()?).ok()?)
+    }
+
+    pub fn exists(p: &Path) -> bool {
+        open(p).is_some()
+    }
+
+    pub fn read(p: &Path) -> Option<Vec<u8>> {
+        let mut a = open(p)?;
+        let mut v = Vec::with_capacity(a.length());
+        a.read_to_end(&mut v).ok()?;
+        Some(v)
+    }
 }
 
 /// The shell's own pages (the sign-in window), compiled into the executable. Same origin as the app, so the bridge works.
-const SHELL_PAGES: &[(&str, &[u8])] = &[("/.shell/account.html", include_bytes!("../../bridge/account.html"))];
+const SHELL_PAGES: &[(&str, &[u8])] = &[
+    ("/.shell/account.html", include_bytes!("../../bridge/account.html")),
+    // SD.8: Studio's first start brings over the separate apps' data (carry.rs).
+    ("/.shell/carry.html", include_bytes!("../../bridge/carry.html")),
+    // Their words (desktop shell language files): the loader and one file per language.
+    ("/.shell/i18n.js", include_bytes!("../../bridge/shell-i18n.js")),
+    ("/.shell/lang/en.json", include_bytes!("../../lang/en.json")),
+    ("/.shell/lang/es-MX.json", include_bytes!("../../lang/es-MX.json")),
+];
 
 pub fn respond(site: &Site, req: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let mut b = Response::builder();
     for (k, v) in &site.headers {
         b = b.header(k.as_str(), v.as_str());
     }
-    if let Some((_, page)) = SHELL_PAGES.iter().find(|(p, _)| *p == req.uri().path()) {
-        return b.status(StatusCode::OK).header(header::CONTENT_TYPE, "text/html; charset=utf-8").body(page.to_vec()).unwrap();
+    if let Some((p, page)) = SHELL_PAGES.iter().find(|(p, _)| *p == req.uri().path()) {
+        let ctype = if p.ends_with(".js") { "text/javascript; charset=utf-8" } else if p.ends_with(".json") { "application/json" } else { "text/html; charset=utf-8" };
+        return b.status(StatusCode::OK).header(header::CONTENT_TYPE, ctype).header("X-Content-Type-Options", "nosniff").body(page.to_vec()).unwrap();
     }
     let Some(path) = resolve(&site.root, req.uri().path()) else {
         return b
@@ -118,7 +201,7 @@ pub fn respond(site: &Site, req: &Request<Vec<u8>>) -> Response<Vec<u8>> {
             .body(b"Not found".to_vec())
             .unwrap();
     };
-    match std::fs::read(&path) {
+    match read_source(&path).ok_or(()) {
         Ok(bytes) => b
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime(&path))

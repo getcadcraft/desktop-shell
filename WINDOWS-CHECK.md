@@ -50,3 +50,52 @@ repo `fixtures/` (e.g. `fixtures/dwg/kitchen-equipment.dwg` for CadCraft).
 ## 5. MSI (IT departments)
 
 18. `msiexec /i <App>-<version>.msi /qn` as an administrator → installed for all users; `msiexec /x … /qn` removes it.
+
+## Studio with WebView2 inside (SD.2; 0.4.1 and later)
+
+From 0.4.1 Studio carries its own web engine (RUNTIME.md). Run sections 1–4 with `CadCraft Studio-<version>-setup.exe`,
+then these, on **(a) a clean Windows 10 with no WebView2 runtime** (check first: Settings › Apps has no "Microsoft Edge
+WebView2 Runtime", and `HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`
+is absent) and **(b) a Windows 11**:
+
+- W1. The installer never mentions WebView2 and never downloads anything (try it with the network unplugged on (a)).
+- W2. `%LOCALAPPDATA%\CadCraft Studio\webview2\msedgewebview2.exe` exists; its version (Properties › Details) matches
+  `WebView2-NOTICE.txt` beside the exe.
+- W3. `icacls "%LOCALAPPDATA%\CadCraft Studio\webview2"` lists `APPLICATION PACKAGE AUTHORITY\ALL APPLICATION PACKAGES`
+  and `…\ALL RESTRICTED APPLICATION PACKAGES` with `(OI)(CI)(RX)`.
+- W4. Studio starts and the hub draws (no blank window); open CadCraft and PartCraft from the hub. Task Manager › Details:
+  the `msedgewebview2.exe` processes run from the install folder, not `C:\Program Files (x86)\Microsoft\EdgeWebView`.
+- W5. PartCraft's status bar does not say single-threaded (COOP/COEP under WebView2).
+- W6. File types: double-click a `.dwg` (only if nothing else had `.dwg`), a `.ccsheets` and a `.modelcraft`: Studio
+  opens each in the right app; `.pdf` is only under Open with.
+- W7. Uninstall: the whole install folder is gone, `webview2\` included (nothing left in `%LOCALAPPDATA%\CadCraft Studio`).
+- W8. On (a) only: after uninstalling, still no "Microsoft Edge WebView2 Runtime" in Settings › Apps (we never installed one).
+
+Before uninstalling (W7), also:
+
+- W9. **Shortcuts per app (SD.6):** Start menu › "CadCraft Studio" folder has CadCraft, BimCraft, ModelCraft, MarkupCraft,
+  TakeoffCraft, CivilCraft, DetailCraft and PartCraft, each with its own coloured icon; typing "BimCraft" in Start finds
+  it. Each opens Studio straight into that app; with Studio already open, it opens the app in the running Studio.
+- W10. **Panels window (DR.5):** in CadCraft, pop the panels out to their own window, then dock the last one back to a
+  side: the empty "CadCraft panels" window closes. Pop them out again and use "Put panels back": it closes too.
+- W11. **Invite links:** `regedit` › `HKCU\Software\Classes\ccstudio\shell\open\command` = `"…\CadCraft Studio.exe" "%1"`.
+  Type `ccstudio://join/AB3K7MNP#abcdefghijklmnopqrstuv` into the browser's address bar: the browser asks to open CadCraft
+  Studio, and Studio comes forward (it does nothing more with a made-up room until Studio Live ships).
+- W12. **Firewall (Studio Live):** run the installer once more with right-click › Run as administrator: Windows Defender
+  Firewall › Advanced › Inbound Rules has "CadCraft Studio" (Private only, this program). A normal per-user install
+  can't add it: note whether Windows asks later instead (that question comes only when Studio first hosts, in 0.5).
+  After W7, the rule is gone.
+
+**Studio replaces the separate apps (SD.8)** — on a machine with the 0.4 per-app installers (`/downloads/0.4/`), before
+installing Studio:
+
+- W13. Install CadCraft 0.4 and BimCraft 0.4. In CadCraft: open the sample `.dwg`, change Settings (e.g. Model theme),
+  draw a line and leave it unsaved; close CadCraft (the recovery copy stays). Then open CadCraft again and leave it open.
+- W14. Run the Studio installer. It asks once: "Remove the separate apps installed before (CadCraft, BimCraft)?" → Yes.
+  CadCraft is open: "CadCraft is open… choose Retry" → close CadCraft → Retry. Both disappear from Settings › Apps and the
+  Start menu; `%LOCALAPPDATA%\CadCraft` and `…\BimCraft` are gone; `%LOCALAPPDATA%\com.getcadcraft.cadcraft` is still there.
+  `.dwg` now opens in Studio (if CadCraft had it). Try once with Cancel instead of Retry: CadCraft stays installed beside Studio.
+- W15. First start of Studio: a short "Setting up CadCraft Studio" page, then the hub. In CadCraft (inside Studio): the
+  Model theme is set, the recent files list has the sample and it reopens, and "Recover your work?" offers the unsaved line.
+  `%APPDATA%\com.getcadcraft.studio\carried.json` lists cadcraft and bimcraft as done. Start Studio again: straight to the hub.
+- W16. Silent: `CadCraft-Studio-<v>-setup.exe /S` with CadCraft 0.4 installed and closed removes it without asking.

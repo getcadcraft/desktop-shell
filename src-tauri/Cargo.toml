@@ -7,24 +7,83 @@ description = "CadCraft desktop shell: one app's browser edition in a system web
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# TB.3: links ios/plugin (Swift) when building for iPad on a Mac (build.rs); the same version tauri-build uses.
+tauri-utils = "2"
+
+# The shell is a library (src/lib.rs `run()`): the desktop executable (src/main.rs) calls it, and Android/iOS load it as
+# the app's native library (TB.1, docs/0.5-PART3.md track TB).
+[lib]
+name = "cadcraft_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# X.5: token randomness (control.rs) and the tablets' document keys (files.rs).
+getrandom = "0.3"
+# Tablets: bytes from the page arrive as base64 there (files.rs body_bytes).
+base64 = "0.22"
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent", "crypto-rust"] }
+
+# Studio Live (docs/0.5-PLAN.md track LV): live-relay's src/live/crypto.rs (SPAKE2 + ChaCha20-Poly1305) and live-core's
+# session server (WebSocket, MessagePack). The `live` feature, on by default since live-core keeps it green (2026-10-14);
+# `build.mjs --no-live` leaves it out (0.4.1: a 0.4 point release carries no Studio Live code).
+spake2 = { version = "0.4", optional = true }
+chacha20poly1305 = { version = "0.10", optional = true }
+hkdf = { version = "0.12", optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "fs", "io-util"], optional = true }
+# tokio-tungstenite (the host's relay socket, live/relay.rs, is wss://) is declared per target below: the OS's own TLS as
+# ureq does, rustls with the platform verifier on Android.
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
+rmp-serde = { version = "1", optional = true }
+rmpv = { version = "1", features = ["with-serde"], optional = true }
+# Studio's glue (src/studio_live.rs): finding a host on the network (`_ccstudio._tcp`, MIT OR Apache-2.0, no async runtime of
+# its own) and the machine's own addresses for the QR (MIT OR BSD-3-Clause; the version mdns-sd itself uses).
+mdns-sd = { version = "0.21", default-features = false, optional = true }
+if-addrs = { version = "0.15", optional = true }
+
+# Desktop only (TB.1): a store updates the tablet builds, they have one window and no second start, and the assistants'
+# local MCP server stays on computers.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 # W.7: signed updates, only when a build carries a feed and the owner's public key (src/updates.rs).
 tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# X.5: Studio's local MCP server (src/control.rs) — a small synchronous HTTP server on 127.0.0.1, and token randomness.
+# X.5: Studio's local MCP server (src/control.rs) — a small synchronous HTTP server on 127.0.0.1.
 tiny_http = "0.12"
-getrandom = "0.3"
+
 # C.2: the device flow over HTTPS with the operating system's own TLS (SChannel / Secure Transport / OpenSSL) and its
 # trust store; the token goes to the OS credential store.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 ureq = { version = "3", default-features = false, features = ["native-tls", "json"] }
-keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent", "crypto-rust"] }
+tokio-tungstenite = { version = "0.28", optional = true, features = ["native-tls"] }
+
+# Android has no system OpenSSL (TB.1): rustls there, verified by the system's own certificates through
+# rustls-platform-verifier (its Kotlin half is added to the Gradle build); still no bundled CA list (patches/webpki-roots).
+# The sign-in token goes to the Android Keystore through the shell's own Kotlin plugin (src/mobile.rs).
+[target.'cfg(target_os = "android")'.dependencies]
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "json"] }
+tokio-tungstenite = { version = "0.28", optional = true, features = ["__rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+# jni 0.21 is tao's and wry's (protocol.rs asks it for the AssetManager); 0.22 is the platform verifier's (its init).
+jni = "0.21"
+jni22 = { package = "jni", version = "0.22" }
+# The suite is read from the APK's assets in place (protocol.rs).
+ndk = "0.9"
+ndk-sys = "0.6"
+ndk-context = "0.1"
+
+[features]
+default = ["live"]
+live = ["dep:spake2", "dep:chacha20poly1305", "dep:hkdf", "dep:hmac", "dep:sha2", "dep:rand_core", "dep:tokio",
+        "dep:tokio-tungstenite", "dep:futures-util", "dep:rmp-serde", "dep:rmpv", "dep:mdns-sd", "dep:if-addrs"]
 
 [profile.release]
 codegen-units = 1
@@ -36,11 +95,16 @@ panic = "abort"
 # Download "Save as" dialogs run on the UI thread with rfd's own synchronous dialog (same rfd as tauri-plugin-dialog).
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.16", default-features = false, features = ["common-controls-v6"] }
+# DR.5: hear a pop-up page's window.close() (WebView2 WindowCloseRequested) and destroy its native window (same version as wry's).
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
 # W.4b: let the app's own scripts open its panels window at start (WebKitGTK blocks script pop-ups by default).
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
+# DR.5: a pop-up's web view going away (its page closed it) takes its window with it (same gtk as tauri's).
+gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rfd = { version = "0.16", default-features = false }
@@ -50,3 +114,8 @@ rfd = { version = "0.16", default-features = false }
 option-ext = { path = "../patches/option-ext" }
 # ureq's native-tls feature names a bundled CA list; we verify with the OS trust store, so it is an empty crate of ours.
 webpki-root-certs = { path = "../patches/webpki-root-certs" }
+# The same for ureq's rustls feature (Android): the platform verifier decides, the bundled list is never read.
+webpki-roots = { path = "../patches/webpki-roots" }
+# wry on Android puts init scripts into HTML with dom_query when the WebView is too old for document-start scripts; its
+# selector engine is MPL-2.0, so the few calls wry makes come from our own crate (TB.2).
+dom_query = { path = "../patches/dom_query" }

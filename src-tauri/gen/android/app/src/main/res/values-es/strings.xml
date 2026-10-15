@@ -1,0 +1,8 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- Borrador (es-MX), como los demás textos en español de Studio. -->
+    <string name="webview_old_title">Actualiza Android System WebView</string>
+    <string name="webview_old_body">CadCraft Studio muestra sus apps con Android System WebView. Esta tableta tiene la versión %1$d; Studio necesita la %2$d o posterior. Actualízala en Google Play y vuelve a abrir Studio.</string>
+    <string name="webview_old_update">Actualizar</string>
+    <string name="webview_old_later">Ahora no</string>
+</resources>

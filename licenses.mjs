@@ -44,7 +44,9 @@ const meta = JSON.parse(execFileSync('cargo', ['metadata', '--format-version', '
 const pkgs = new Map(meta.packages.map((p) => [p.id, p]));
 const nodes = new Map(meta.resolve.nodes.map((n) => [n.id, n]));
 // What links into the executable: cargo tree with real feature resolution, normal edges, nothing behind a proc macro.
-const tree = execFileSync('cargo', ['tree', '-e', 'normal,no-proc-macro', '--target', TARGET, '--prefix', 'none', '--format', '{p}'],
+// --no-default-features: a build without Studio Live (build.mjs --no-live) ships fewer crates; list only those.
+const NO_DEFAULT = process.argv.includes('--no-default-features');
+const tree = execFileSync('cargo', ['tree', '-e', 'normal,no-proc-macro', '--target', TARGET, '--prefix', 'none', '--format', '{p}', ...(NO_DEFAULT ? ['--no-default-features'] : [])],
   { cwd: path.join(HERE, 'src-tauri'), env: { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}` }, maxBuffer: 1 << 26 }).toString();
 const want = new Set(tree.split('\n').map((l) => l.replace(/ \(\*\)$/, '').replace(/ \(.*\)$/, '').trim()).filter(Boolean));
 const root = meta.resolve.root;

@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+# CadCraft Studio for macOS (docs/0.5-PLAN.md S.5/S.6 as Studio, SD.7): the released Studio suite → a universal .app in a
+# .dmg, signed with the owner's Developer ID and notarized when the Apple secrets exist; with store: true, the sandboxed
+# Mac App Store build (macos/Studio.MAS.entitlements). Run by hand (Actions › macOS Studio › Run workflow). Nothing here
+# publishes: the artifacts are downloaded and attached on the owner's go. Without the Apple secrets it makes an unsigned
+# (ad hoc) test build: version dev = the dev suite from this repo's pre-release suite-dev (SIGNING.md § macOS test build).
+name: macOS Studio
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Studio suite release, e.g. 0.5 (getcadcraft/studio release studio-v<version>.0), or dev (this repo's pre-release suite-dev)
+        required: true
+      store:
+        description: Mac App Store build (sandboxed, no sign-in, no update feed)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+      - name: Bridge, runtime-check and language tests
+        run: node test/bridge.test.mjs && node test/webview2.test.mjs && node test/lang.test.mjs
+      - name: License gate (shipped crates)
+        run: node licenses.mjs --target aarch64-apple-darwin && node licenses.mjs --target x86_64-apple-darwin
+
+  build:
+    needs: test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: 'aarch64-apple-darwin,x86_64-apple-darwin' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Tools
+        run: |
+          pip install pillow
+          cargo install tauri-cli --version "^2" --locked
+      - name: Get the Studio suite (and check its published checksum)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v='${{ inputs.version }}'; zip="cadcraft-studio-browser-v$v.zip"
+          if [ "$v" = dev ]; then
+            # Test builds: the dev suite attached to this repo's pre-release "suite-dev" (zip + SHA256SUMS), never published.
+            gh release download suite-dev --repo "${{ github.repository }}" --pattern "$zip" --pattern SHA256SUMS --dir suite
+          else
+            gh release download "studio-v$v.0" --repo getcadcraft/studio --pattern "$zip" --pattern SHA256SUMS --dir suite
+          fi
+          (cd suite && grep " $zip\$" SHA256SUMS | shasum -a 256 -c -)
+      - name: Build (universal .app + .dmg)
+        env:
+          # The owner's Apple Developer account (S.1): Developer ID Application certificate as base64 .p12, its password,
+          # the identity name, and an app-specific password for notarization.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then echo "::warning::No Apple secrets: the build is unsigned and not notarized (Gatekeeper will refuse it)."; fi
+          node build.mjs studio --target macos --edition "suite/cadcraft-studio-browser-v${{ inputs.version }}.zip" ${{ inputs.store && '--store' || '' }}
+      - name: Check signature and notarization
+        run: |
+          for d in out/*.dmg; do
+            hdiutil attach -nobrowse -mountpoint /tmp/cc "$d"
+            codesign --verify --deep --strict --verbose=2 "/tmp/cc/CadCraft Studio.app" || echo "::warning::not signed"
+            spctl --assess --type execute --verbose "/tmp/cc/CadCraft Studio.app" || echo "::warning::Gatekeeper refuses it (unsigned or not notarized)"
+            hdiutil detach /tmp/cc
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-${{ inputs.version }}-macos
+          path: |
+            out/*.dmg
+            out/SHA256SUMS

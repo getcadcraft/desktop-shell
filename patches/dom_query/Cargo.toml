@@ -1,0 +1,9 @@
+[package]
+name = "dom_query"
+version = "0.28.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "CadCraft's own stand-in for dom_query, whose CSS selector engine (selectors, cssparser) is MPL-2.0 and may not ship in the shell: the calls wry (Android, init scripts into HTML on old WebViews) and tauri-utils html2 (build time: CSP meta, nonces, scripts in head) make, on the page kept as text."
+publish = false
+
+[dependencies]

@@ -91,11 +91,12 @@ function stopShells() {
     execFileSync('sleep', ['0.2']);
   }
 }
-function startDriver(root) {
+function startDriver(root, dataHome = path.join(tmp, 'data')) {
   stopShells();
   PORT += 1; BASE = `http://127.0.0.1:${PORT}`; // a fresh port: the last driver may still be letting go of its own
-  const env = { ...process.env, TAURI_WEBVIEW_AUTOMATION: 'true', CADCRAFT_DESKTOP_ROOT: root, CC_TEST_ANSWERS: answers,
-    XDG_DATA_HOME: path.join(tmp, 'data'), XDG_CONFIG_HOME: path.join(tmp, 'config'), XDG_CACHE_HOME: path.join(tmp, 'cache') };
+  // CC_LIVE_BIND (debug builds): Studio Live test sessions listen on loopback only, never on a public interface.
+  const env = { ...process.env, TAURI_WEBVIEW_AUTOMATION: 'true', CADCRAFT_DESKTOP_ROOT: root, CC_TEST_ANSWERS: answers, CC_LIVE_BIND: '127.0.0.1',
+    XDG_DATA_HOME: dataHome, XDG_CONFIG_HOME: path.join(tmp, 'config'), XDG_CACHE_HOME: path.join(tmp, 'cache') };
   const p = spawn('WebKitWebDriver', [`--port=${PORT}`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   driverLog = '';
   const keep = (d) => { driverLog = (driverLog + d).slice(-4000); };
@@ -132,6 +133,146 @@ const waitFor = async (fn, ms = 20000) => {
   while (Date.now() - t < ms) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 200)); }
   return false;
 };
+
+/**
+ * Studio Live (studio_live.rs, cadcraftDesktop.live): the CadCraft window hosts a session in-process; a Node client joins
+ * over the LAN with the code (and a signed-in name: join.aud must be its connection's audience); a second client joins
+ * from the same window through the shell's own socket ('join' transport); the hub finds the session by mDNS (code tag and
+ * an invite room's tag); the session port serves the suite to browser joiners (LV.12); cloud.request takes the new paths
+ * only; ending stops the server. Uses the app's own live-client.js / live-crypto.js and a small model (no app adapter).
+ */
+async function studioLive(s, appHandle, hubHandle) {
+  console.log('Studio Live');
+  const go = (h) => wd('POST', `/session/${s.id}/window`, { handle: h });
+  await go(appHandle);
+  const setup = await s.run(`const desk = window.cadcraftDesktop;
+    const main = document.querySelector('script[type="module"][src*="/assets/apps/"]');
+    const folder = new URL('.', new URL(main.getAttribute('src'), document.baseURI)).href;
+    const L = await import(folder + 'live-client.js'), C = await import(folder + 'live-crypto.js');
+    const until = async (f, ms = 15000) => { const t = Date.now(); while (!f()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 20)); } };
+    const toy = () => { const model = new Map(); let cb = null; const a = { app: 'cadcraft', schema: 1, model,
+      onLocalChange(f) { cb = f; }, edit(label, ops) { const inverse = a.invert(ops); a.apply(ops); return cb && cb({ label, ops, inverse }); },
+      invert(ops) { return ops.map((o) => (o.op === 'add' ? { op: 'del', id: o.id } : { op: 'add', id: o.id, obj: model.get(o.id) || {} })).reverse(); },
+      apply(ops) { for (const o of ops) { if (o.op === 'add') model.set(o.id, o.obj); else model.delete(o.id); } },
+      touched(ops) { return ops.map((o) => ({ k: 'e:' + o.id, m: o.op === 'add' ? 'c' : 'd' })); },
+      snapshot() { return L.pack([...model.entries()]); }, load(b) { model.clear(); for (const [k, v] of L.unpack(b)) model.set(k, v); },
+      keys() { return [...model.keys()].sort().join(','); } }; return a; };
+    const a = toy(), joins = [], codes = [];
+    const H = new L.LiveClient({ transport: desk.live.transport('local', { app: 'cadcraft', schema: 1 }), adapter: a, name: 'Host', role: 'host', secure: false });
+    H.on('join', (b) => joins.push(b)); H.on('code', (b) => codes.push(b));
+    H.connect();
+    await until(() => H.status === 'live');
+    H.invite({});
+    await until(() => codes.length);
+    a.edit('add', [{ op: 'add', id: 'h1', obj: { n: 1 } }]);
+    const sess = await desk.live.session();
+    let second = null; try { desk.live.transport('local', {})({ open() {}, message() {}, close(r) { second = r; } }); await until(() => second !== null, 5000); } catch { second = 'threw'; }
+    await desk.live.advertise(codes[0].tag, { app: 'cadcraft' });
+    await desk.live.advertise({ room: 'K7QX9M2B' }, { app: 'cadcraft' });
+    window.__liveE2E = { L, C, toy, until, H, a, joins, desk };
+    return { code: codes[0].code, tag: codes[0].tag, sess, second, roomTag: C.roomTag('K7QX9M2B') };`);
+  if (!setup.ok) { ok(false, 'the app window hosts a session', setup.e); return; }
+  const { code, tag, sess, second, roomTag } = setup.r;
+  ok(sess.running && sess.port > 0 && sess.app === 'cadcraft' && JSON.stringify(sess.addrs) === '["127.0.0.1"]',
+    'transport(\'local\') starts this window\'s session: session() → running, port, app; bound to loopback here (CC_LIVE_BIND)', JSON.stringify(sess));
+  // Nothing of the test session is reachable on this machine's other interfaces (Studio itself binds 0.0.0.0 for the LAN).
+  const outward = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
+  const reach = await Promise.all(outward.map((a) => fetch(`http://${a}:${sess.port}/apps/cadcraft/`, { signal: AbortSignal.timeout(2000) }).then(() => a, () => null)));
+  ok(outward.length === 0 || reach.every((x) => x === null), 'the test session does not answer on ' + (outward.join(', ') || 'any other interface'), reach.filter(Boolean).join(', '));
+  ok(/busy/.test(String(second)), 'one session per window: a second local transport is refused', String(second));
+  const url = `ws://${sess.addrs[0]}:${sess.port}/live`;
+  // LV.12: the session port serves Studio's suite to browser joiners, pages marked cc-live.
+  const page = await fetch(`http://${sess.addrs[0]}:${sess.port}/apps/cadcraft/`).then(async (r) => ({ st: r.status, t: await r.text() })).catch((e) => ({ st: 0, t: String(e) }));
+  ok(page.st === 200 && page.t.includes('name="cc-live"'), 'the session port serves the suite to browser joiners (cc-live page)', String(page.st));
+  // A second client joins by LAN: a Node process with the code, signed in (a stand-in assertion).
+  await import(path.join(SITE, 'tools/live-crypto/node-hook.mjs'));
+  const NC = await import(path.join(SITE, 'public_html/assets/js/live-crypto.js'));
+  const NL = await import(path.join(SITE, 'public_html/assets/js/live-client.js'));
+  const nm = new Map(); let nodeAud = null;
+  const na = { app: 'cadcraft', schema: 1, onLocalChange(f) { na.cb = f; }, invert: (ops) => ops.map((o) => ({ op: 'del', id: o.id })), apply(ops) { for (const o of ops) o.op === 'add' ? nm.set(o.id, o.obj) : nm.delete(o.id); },
+    touched: (ops) => ops.map((o) => ({ k: 'e:' + o.id, m: o.op === 'add' ? 'c' : 'd' })), snapshot: () => NL.pack([...nm.entries()]), load(b) { nm.clear(); for (const [k, v] of NL.unpack(b)) nm.set(k, v); } };
+  const J = new NL.LiveClient({ transport: NL.webSocketTransport(url), adapter: na, name: 'Node joiner', device: 'e2e', code, crypto: NC,
+    signIn: async (aud) => { nodeAud = aud; return { assertion: 'v1.e2e.sig' }; } });
+  J.connect();
+  const card = (await s.run(`const E = window.__liveE2E; await E.until(() => E.joins.length); const b = E.joins[0]; E.H.approve(b.c, 'editor');
+    return { c: b.c, name: b.name, via: b.via, aud: b.aud, assertion: b.assertion };`)).r;
+  ok(card && card.name === 'Node joiner' && card.via === 'lan', 'the host sees the approve card (on this network)', JSON.stringify(card));
+  ok(card && nodeAud && card.aud === nodeAud && card.assertion === 'v1.e2e.sig', 'join carries the signed-in assertion and this connection\'s aud (LV.19)');
+  ok(await waitFor(async () => J.status === 'live' && nm.has('h1'), 15000), 'the LAN joiner is in, with the host\'s model (snapshot from the host window)', J.status);
+  const inc = na.cb({ label: 'add', ops: [{ op: 'add', id: 'n1', obj: { n: 2 } }], inverse: [{ op: 'del', id: 'n1' }] }) && nm.set('n1', { n: 2 });
+  ok(inc && await waitFor(async () => (await s.run(`return window.__liveE2E.a.keys();`)).r === 'h1,n1', 10000), 'its edit reaches the host');
+  // A Studio joiner: the shell opens the socket ('join' transport), the page does the handshake.
+  const sj = await s.run(`const E = window.__liveE2E; const b = E.toy(); const n = E.joins.length;
+    const J2 = new E.L.LiveClient({ transport: E.desk.live.transport('join', { url: ${JSON.stringify(url)} }), adapter: b, name: 'Studio joiner', code: ${JSON.stringify(code)}, crypto: E.C });
+    J2.connect();
+    await E.until(() => E.joins.length > n); E.H.approve(E.joins[n].c, 'viewer');
+    await E.until(() => J2.status === 'live' && b.keys() === 'h1,n1');
+    let bad = null; try { E.desk.live.transport('join', { url: 'ws://192.168.1.20:1/other' })({ open() {}, message() {}, close(r) { bad = r; } }); await E.until(() => bad !== null, 5000); } catch { bad = 'threw'; }
+    E.J2 = J2; return { role: J2.role, keys: b.keys(), bad };`);
+  ok(sj.ok && sj.r.role === 'viewer' && sj.r.keys === 'h1,n1', 'a Studio joiner through the shell\'s socket (join transport) gets in and catches up', JSON.stringify(sj.r || sj.e));
+  ok(sj.ok && /not_allowed/.test(sj.r.bad), 'the join transport opens only live addresses', sj.r && sj.r.bad);
+  // mDNS from the hub: the code's tag, and an invite room's tag (LV.26).
+  await go(hubHandle);
+  const md = (await s.run(`const L = window.cadcraftDesktop.live;
+    const t0 = Date.now(); const a = await L.browse(${JSON.stringify(tag)}, 3000); const ms = Date.now() - t0;
+    const b = await L.browse({ room: 'K7QX9M2B' }, 3000);
+    const c = await L.browse('ZZ', 400);
+    let hubSession = null; try { await L.session(); hubSession = 'given'; } catch (e) { hubSession = e.code; }
+    const C = window.cadcraftDesktop.cloud; const code = async (p) => { try { await C.request({ path: p }); return 'ok'; } catch (e) { return e.code; } };
+    return { a, b, c, ms, hubSession, avatar: await code('/api/v1/me/avatar?size=64'), check: await code('/api/v1/live/check?app=cadcraft'), lib: await code('/api/v1/library/items') };`)).r;
+  ok(md && md.a.some((f) => f.port === sess.port && f.app === 'cadcraft'), `mDNS: the hub finds the session by its code's tag (${md && md.ms} ms)`, JSON.stringify(md && md.a));
+  ok(md && md.b.some((f) => f.port === sess.port), 'mDNS: and by an invite room\'s tag (LV.26)', JSON.stringify(md && md.b));
+  ok(md && md.c.length === 0, 'an unknown tag finds nothing');
+  ok(md && md.hubSession === 'not_allowed', 'only app windows host');
+  ok(md && md.avatar !== 'not_allowed' && md.check !== 'not_allowed' && md.lib === 'not_allowed', 'cloud.request takes /api/v1/me/avatar and /api/v1/live/* (signed out here), still not the library', JSON.stringify(md));
+  // The host ends: everyone is told, the server stops with the window's host connection.
+  await go(appHandle);
+  const end = (await s.run(`const E = window.__liveE2E; E.H.end(); await E.until(() => E.H.final && E.J2.final);
+    await new Promise((r) => setTimeout(r, 300)); return { h: E.H.status, j2: E.J2.status, s: await E.desk.live.session() };`)).r;
+  ok(end && end.h === 'ended' && end.j2 === 'ended' && end.s.running === false, 'End: everyone ends, the window\'s session is gone', JSON.stringify(end));
+  ok(await waitFor(async () => J.final, 10000) && J.status === 'ended', 'the LAN joiner ended too (keeps its copy)', J.status);
+  J.stop();
+  // The server itself stops a few seconds after (so `end` reached everyone): the port no longer answers.
+  await new Promise((r) => setTimeout(r, 4000));
+  const gone = await fetch(`http://${sess.addrs[0]}:${sess.port}/apps/cadcraft/`).then(() => false, () => true);
+  ok(gone, 'the session port is closed after the end');
+
+  // Host handoff (LV.17) into Studio: a headless host (live-server) hands its session to this window, which carries on from
+  // the state with exportState's twin startFrom (a real session server in the shell); the old host follows with its ticket.
+  const TOK = 'e2e-' + Math.random().toString(36).slice(2);
+  const srvBin = path.join(SITE, 'tools/live-test/server/target/release/live-server');
+  if (!fs.existsSync(srvBin)) { console.log('  · (no live-server: the handoff checks skip; cargo build --release in tools/live-test/server)'); return; }
+  const old = spawn(srvBin, ['--bind', '127.0.0.1:0', '--app', 'cadcraft', '--token', TOK, '--auto-approve'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  try {
+    const oldAddr = JSON.parse(await new Promise((r) => { let b = ''; old.stdout.on('data', (d) => { b += d; if (b.includes('\n')) r(b.split('\n')[0]); }); })).addr;
+    const om = new Map();
+    const oa = { app: 'cadcraft', schema: 1, onLocalChange(f) { oa.cb = f; }, invert: (ops) => ops.map((o) => ({ op: 'del', id: o.id })), apply(ops) { for (const o of ops) o.op === 'add' ? om.set(o.id, o.obj) : om.delete(o.id); },
+      touched: (ops) => ops.map((o) => ({ k: 'e:' + o.id, m: o.op === 'add' ? 'c' : 'd' })), snapshot: () => NL.pack([...om.entries()]), load(b) { om.clear(); for (const [k, v] of NL.unpack(b)) om.set(k, v); } };
+    const N = new NL.LiveClient({ transport: NL.webSocketTransport(`ws://${oldAddr}/live`), adapter: oa, name: 'Old host', role: 'host', token: TOK, secure: false, crypto: NC });
+    const ncodes = []; N.on('code', (b) => ncodes.push(b.code));
+    N.connect();
+    if (!(await waitFor(async () => N.status === 'live', 10000))) { ok(false, 'a headless host'); return; }
+    N.invite({});
+    await waitFor(async () => ncodes.length > 0, 5000);
+    oa.cb({ label: 'add', ops: [{ op: 'add', id: 'o1', obj: {} }], inverse: [{ op: 'del', id: 'o1' }] }); om.set('o1', {});
+    const joined = (await s.run(`const E = window.__liveE2E; const b = E.toy();
+      const J = new E.L.LiveClient({ transport: E.desk.live.transport('join', { url: ${JSON.stringify(`ws://${oldAddr}/live`)} }), adapter: b, name: 'Studio', code: ${JSON.stringify(ncodes[0] || '')}, crypto: E.C,
+        relocate: (url) => E.desk.live.transport('join', { url }),
+        takeOver: async (state) => { const st = await E.desk.live.startFrom(state); return { addrs: st.addrs, port: st.port, transport: E.desk.live.transport('local', { app: 'cadcraft', schema: 1 }) }; } });
+      J.connect(); await E.until(() => J.status === 'live' && b.keys() === 'o1'); E.J = J; E.jb = b; return J.c;`)).r;
+    ok(typeof joined === 'number', 'this window joins a headless host with a code');
+    N.handover(joined);
+    const took = (await s.run(`const E = window.__liveE2E; await E.until(() => E.J.role === 'host' && E.J.status === 'live', 20000);
+      return { role: E.J.role, s: await E.desk.live.session() };`)).r;
+    ok(took && took.role === 'host' && took.s.running && took.s.port > 0, 'handed over: startFrom runs the session in the shell and this window is its host', JSON.stringify(took));
+    ok(await waitFor(async () => N.relocated && N.status === 'live' && N.role === 'editor', 15000), 'the old host follows to Studio with its ticket, as an editor', N.status + ' ' + N.role);
+    oa.cb({ label: 'add', ops: [{ op: 'add', id: 'o2', obj: {} }], inverse: [{ op: 'del', id: 'o2' }] }); om.set('o2', {});
+    ok(await waitFor(async () => (await s.run(`return window.__liveE2E.jb.keys();`)).r === 'o1,o2', 10000), 'its edit reaches the new host in Studio');
+    const st2 = (await s.run(`const E = window.__liveE2E; E.J.end(); await E.until(() => E.J.final); await new Promise((r) => setTimeout(r, 300)); return await E.desk.live.session();`)).r;
+    ok(st2 && st2.running === false && await waitFor(async () => N.final, 10000), 'End from the new host ends it for everyone');
+    N.stop();
+  } finally { old.stdin.end(); old.kill(); }
+}
 
 // ---------------------------------------------------------------------------------------------------------- CadCraft
 const launched = path.join(work, 'kitchen equipment.dwg');
@@ -312,6 +453,35 @@ try {
   ok(pop.ok && pop.r.w === 420 && pop.r.h === 320, 'it takes the size it asked for', JSON.stringify(pop.r));
   ok(pop.ok && Math.abs(pop.r.x - 40) <= 8 && Math.abs(pop.r.y - 50) <= 40, 'and the place it asked for', JSON.stringify(pop.r));
   ok(pop.ok && pop.r.far && pop.r.far.x < pop.r.sw && pop.r.far.y < pop.r.sh, 'a place off every screen is pulled back on screen', JSON.stringify(pop.r && pop.r.far));
+
+  // DR.5: a pop-up its page closes goes away as a native window, not only its web view (WebDriver can't tell the two
+  // apart, so the debug shell lists its own windows).
+  const nativeWins = async () => (await s.run(`return await window.__TAURI_INTERNALS__.invoke('cc_test_windows');`)).r || [];
+  const onlyMain = async () => waitFor(async () => (await nativeWins()).join() === 'main', 5000);
+  ok(await onlyMain(), 'w.close() destroys the pop-up\'s window (DR.5)', JSON.stringify(await nativeWins()));
+  // The movable panels (app-panels.js): dock the last panel of a panels window back, and "Put panels back".
+  const blank = (await s.run(`const w = window.open('', 'cc-e2e-blank', 'popup=yes,width=300,height=200'); const r = !!w;
+    await new Promise((res) => setTimeout(res, 1000)); if (w) w.close(); return r;`)).r;
+  ok(blank, 'window.open(\'\') opens a window (about:blank; the panels window opens that way)');
+  ok(await onlyMain(), 'and it closes as a window too', JSON.stringify(await nativeWins()));
+  const movable = (await s.run(`return !!(window.ccShellPanels && window.ccShellPanels.panels().length);`)).r;
+  if (!movable) ok(false, 'the edition has movable panels (DR.5 docking checks)');
+  else {
+    const open = async (all) => (await s.run(`const P = window.ccShellPanels; const ids = P.panels().map((p) => p.id);
+      const n = P.openWindow(${all ? 'null' : '[ids[0]]'}, 'new'); await new Promise((r) => setTimeout(r, 1500));
+      return {n, ids, wins: P.windows()};`)).r;
+    let o = await open(false);
+    const popped = (await nativeWins()).filter((l) => l.startsWith('popup-')).length;
+    ok(o && o.wins.length === 1 && popped === 1, 'a panel popped out opens one panels window', JSON.stringify({ o, popped }));
+    await s.run(`window.ccShellPanels.move(${JSON.stringify(o && o.ids[0])}, 'left'); await new Promise((r) => setTimeout(r, 500));`);
+    ok(await onlyMain(), 'its last panel docked to a side → the panels window is gone (DR.5)', JSON.stringify(await nativeWins()));
+    o = await open(true);
+    ok(o && o.wins.length === 1 && (await nativeWins()).some((l) => l.startsWith('popup-')), 'every panel popped out again');
+    await s.run(`window.ccShellPanels.closeWindow(); await new Promise((r) => setTimeout(r, 500));`);
+    ok(await onlyMain(), '"Put panels back" → the panels window is gone (DR.5)', JSON.stringify(await nativeWins()));
+    ok((await s.run(`return window.ccShellPanels.panels().every((p) => !p.inWindow);`)).r, 'and every panel is back in the main window');
+    await s.run(`window.ccShellPanels.reset();`);
+  }
 
   // Main window place, kept for the next start (checked below).
   await wd('POST', `/session/${s.id}/window/rect`, { x: 30, y: 40, width: 1100, height: 700 });
@@ -499,7 +669,9 @@ if (SUITE && fs.existsSync(path.join(SUITE, 'index.html')) && fs.existsSync(path
   driver = startDriver(path.join(dir, 'app'));
   try {
     console.log('Studio (suite mode)');
-    const s = await session([dwg2]);
+    // ccstudio:// invite links (links.rs): one good link and two that must be dropped, beside the launch file.
+    const LINK = 'ccstudio://join/AB3K7MNP#abcdefghijklmnopqrstuv', LINK2 = 'ccstudio://join/ZX9Q2RTV#ABCDEFGHIJKLMNOPQRSTUV_-12';
+    const s = await session([dwg2, LINK, 'ccstudio://join/bad#x', 'ccstudio://host/AB3K7MNP#abcdefghijklmnopqrstuv']);
     ok(await waitFor(async () => (await s.run(`return document.readyState === 'complete';`)).r), 'the hub loads');
     const info = (await s.run(`return await window.cadcraftDesktop.info();`)).r;
     ok(info.suite === true && info.windowId === 'main', 'info(): suite, windowId main', JSON.stringify(info));
@@ -525,9 +697,46 @@ if (SUITE && fs.existsSync(path.join(SUITE, 'index.html')) && fs.existsSync(path
         return {i, href: location.href, opened, ctl};`)).r;
       ok(/^app-cadcraft-\d+$/.test(inApp.i.windowId) && inApp.href.includes('/apps/cadcraft/index.html'), 'the app window runs CadCraft, with its own id', JSON.stringify(inApp));
       ok(inApp.opened === 'not_allowed', 'only the hub opens windows');
+      let inAppLinks = null; try { await s.run(`return await window.cadcraftDesktop.links.launch();`).then((x) => { inAppLinks = x.ok ? 'given' : x.code; }); } catch { inAppLinks = 'error'; }
+      ok(inAppLinks === 'not_allowed', 'only the hub takes ccstudio:// links', inAppLinks);
       ok(inApp.ctl === 'not_allowed', 'only the hub runs the MCP server');
+      await studioLive(s, other, mainHandle);
       await wd('POST', `/session/${s.id}/window`, { handle: mainHandle });
     }
+    // ccstudio:// links: the good one, once, untouched; the others dropped; a second start's link reaches onOpen.
+    const lk = (await s.run(`const L = window.cadcraftDesktop.links; const a = await L.launch(); const b = await L.launch();
+      window.__ccE2ELinks = []; L.onOpen((u) => window.__ccE2ELinks.push(u)); return {a, b};`)).r;
+    // The hub's Join card (live-studio's hub-join.js) takes the launch link itself as soon as it loads; then this call finds
+    // none left, and the card has answered (it asks for a name first). Either way: once, and the link never shown.
+    const joinMsg = (await s.run(`const m = document.querySelector('[data-live-join-msg]'); return m && !m.hidden ? m.textContent : '';`)).r;
+    ok(lk && lk.b.length === 0 && (JSON.stringify(lk.a) === JSON.stringify([LINK]) || (lk.a.length === 0 && joinMsg && !joinMsg.includes('abcdefghijklmnopqrstuv'))),
+      'Studio started with a ccstudio:// link hands it to the hub once, untouched; malformed ones are dropped', JSON.stringify({ lk, joinMsg }));
+    const secondLink = spawn(BIN, [LINK2, 'ccstudio://join/AB3K7MNP#bad"secret'], { env: { ...process.env, CADCRAFT_DESKTOP_ROOT: '/nonexistent' }, stdio: 'ignore' });
+    const gotLink = await waitFor(async () => (await s.run(`return window.__ccE2ELinks.length > 0;`)).r, 10000);
+    ok(gotLink && JSON.stringify((await s.run(`await new Promise((r) => setTimeout(r, 500)); return window.__ccE2ELinks;`)).r) === JSON.stringify([LINK2]), 'a link opened while Studio runs reaches the hub (and only the good one)');
+    secondLink.kill();
+    // Per-app shortcuts (SD.6): `--app=<slug>` opens Studio straight into that app, at start and on a second start.
+    const hasApp = async (a) => (await s.run(`return (await window.cadcraftDesktop.windows.list()).some((w) => w.app === '${a}');`)).r;
+    const secondApp = spawn(BIN, ['--app=bimcraft', '--app=nope'], { env: { ...process.env, CADCRAFT_DESKTOP_ROOT: '/nonexistent' }, stdio: 'ignore' });
+    ok(await waitFor(() => hasApp('bimcraft'), 20000), 'a second start with --app=bimcraft opens BimCraft in the running Studio');
+    secondApp.kill();
+    ok(!(await s.run(`return (await window.cadcraftDesktop.windows.list()).some((w) => w.app === 'nope');`)).r, 'an unknown --app is ignored');
+    ok(!(await s.run(`return document.title;`)).r.includes('#'), 'no link in the window title');
+    // Desktop shell language files: the shell's own sign-in window follows Studio's language (cadcraft.studio.lang).
+    const hubHandle = await wd('GET', `/session/${s.id}/window`);
+    const before = new Set(await wd('GET', `/session/${s.id}/window/handles`));
+    await s.run(`localStorage.setItem('cadcraft.studio.lang', 'es-MX'); await window.cadcraftDesktop.account.open();`);
+    let acctHandle = null;
+    await waitFor(async () => { acctHandle = (await wd('GET', `/session/${s.id}/window/handles`)).find((h) => !before.has(h)); return !!acctHandle; }, 10000);
+    if (!acctHandle) ok(false, 'the sign-in window opens');
+    else {
+      await wd('POST', `/session/${s.id}/window`, { handle: acctHandle });
+      const es = await waitFor(async () => (await s.run(`const h = [...document.querySelectorAll('h1')].find((x) => x.offsetParent); return !!h && h.textContent === 'Iniciar sesión en getcadcraft.com' && document.documentElement.lang === 'es-MX';`)).r, 10000);
+      ok(es, 'the shell\'s sign-in window speaks Studio\'s language (es-MX draft)');
+      await s.run(`window.cadcraftDesktop.account.closeWindow();`).catch(() => {});
+      await wd('POST', `/session/${s.id}/window`, { handle: hubHandle });
+    }
+    await s.run(`localStorage.removeItem('cadcraft.studio.lang');`);
     // Direct calls from the hub.
     const r = (await s.run(`const W = window.cadcraftDesktop.windows;
       const bc = new BroadcastChannel('cc-e2e'); window.__ccE2EBc = []; bc.onmessage = (e) => window.__ccE2EBc.push(e.data);
@@ -607,6 +816,82 @@ if (SUITE && fs.existsSync(path.join(SUITE, 'index.html')) && fs.existsSync(path
     await s.end().catch(() => {});
   } catch (e) {
     fail++; console.log('  ✗ ' + e.message);
+  } finally {
+    driver.kill();
+  }
+
+  // SD.8: Studio brings over a separate 0.4 app's data at its first start. Debug builds are all com.getcadcraft.cadcraft,
+  // so an "old BimCraft install" is a profile made by this shell and renamed to com.getcadcraft.bimcraft.
+  console.log('Studio: the separate apps\' data comes over (SD.8)');
+  const home = path.join(tmp, 'carry-data');
+  const own = path.join(home, 'com.getcadcraft.cadcraft'), old = path.join(home, 'com.getcadcraft.bimcraft');
+  const kept = path.join(work, 'kept plan.dwg');
+  fs.copyFileSync(DWG, kept);
+  const idb = `const open = (n, v, up) => new Promise((ok, no) => { const r = v ? indexedDB.open(n, v) : indexedDB.open(n); r.onupgradeneeded = () => up && up(r.result); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+    const req = (r) => new Promise((ok, no) => { r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });`;
+  const snap = (d) => { const out = []; const walk = (x) => { for (const e of fs.readdirSync(x, { withFileTypes: true })) { const p = path.join(x, e.name); if (e.isDirectory()) walk(p); else { const st = fs.statSync(p); out.push(`${path.relative(d, p)} ${st.size} ${st.mtimeMs}`); } } }; walk(d); return out.sort().join('\n'); };
+  try {
+    // 1. Studio's own profile already has a value and a record of its own.
+    driver = startDriver(path.join(dir, 'app'), home);
+    let s = await session([]);
+    await waitFor(async () => (await s.run(`return document.readyState === 'complete';`)).r);
+    await s.run(`${idb} localStorage.setItem('cc-e2e-both', 'studio');
+      const db = await open('cc-e2e-db', 1, (d) => d.createObjectStore('files', { keyPath: 'id' }));
+      await req(db.transaction('files', 'readwrite').objectStore('files').put({ id: 'a', note: 'studio' })); db.close();`);
+    await s.end().catch(() => {}); driver.kill(); stopShells();
+    fs.renameSync(own, own + '.studio');
+    // 2. The old app: its own values, a database at version 2 with a Blob and a Date, a hand-over, and a granted file.
+    driver = startDriver(ccRoot, home);
+    s = await session([kept]);
+    await waitFor(async () => (await s.run(`return document.readyState === 'complete';`)).r);
+    const made = await s.run(`${idb} localStorage.setItem('cc-e2e-old', '1'); localStorage.setItem('cc-e2e-both', 'old');
+      const db = await open('cc-e2e-db', 2, (d) => { d.createObjectStore('files', { keyPath: 'id' }); d.createObjectStore('kv'); });
+      const tx = db.transaction(['files', 'kv'], 'readwrite');
+      tx.objectStore('files').put({ id: 'a', note: 'old' });
+      tx.objectStore('files').put({ id: 'b', blob: new Blob(['hello'], { type: 'text/plain' }), when: new Date(5), bytes: new Uint8Array([1, 2, 3]), tags: new Set(['x']), $odd: 1 });
+      tx.objectStore('kv').put('v', 'k1');
+      await new Promise((ok) => { tx.oncomplete = ok; }); db.close();
+      const h = await open('cadcraft-handoff', 1, (d) => d.createObjectStore('h')); await req(h.transaction('h', 'readwrite').objectStore('h').put(1, 'x')); h.close();
+      return (await window.cadcraftDesktop.readFile(args[0])).length;`, kept);
+    ok(made.ok && made.r > 0, 'an old per-app profile with values, a database and a granted file', JSON.stringify(made));
+    await s.end().catch(() => {}); driver.kill(); stopShells();
+    fs.renameSync(own, old);
+    fs.renameSync(own + '.studio', own);
+    const before = snap(old);
+    // 3. Studio's first start with it beside: the carry page, then the hub.
+    driver = startDriver(path.join(dir, 'app'), home);
+    s = await session([]);
+    const hub = await waitFor(async () => (await s.run(`return location.pathname === '/index.html' && document.readyState === 'complete';`)).r, 90000);
+    ok(hub, 'Studio opens its hub after bringing the data over');
+    const got = (await s.run(`${idb} const db = await open('cc-e2e-db'); const v = db.version;
+      const st = db.transaction(['files', 'kv']); const a = await req(st.objectStore('files').get('a')); const b = await req(st.objectStore('files').get('b'));
+      const k1 = await req(st.objectStore('kv').get('k1')); db.close();
+      const dbs = (await indexedDB.databases()).map((d) => d.name);
+      let read = null; try { read = (await window.cadcraftDesktop.readFile(args[0])).length; } catch (e) { read = e.code || 'error'; }
+      return { old: localStorage.getItem('cc-e2e-old'), both: localStorage.getItem('cc-e2e-both'), v, a, k1,
+        blob: b && b.blob instanceof Blob ? await b.blob.text() : null, type: b && b.blob && b.blob.type, when: b && b.when instanceof Date ? b.when.getTime() : null,
+        bytes: b && b.bytes instanceof Uint8Array ? [...b.bytes] : null, tags: b && b.tags instanceof Set ? [...b.tags] : null, odd: b && b.$odd,
+        handoff: dbs.includes('cadcraft-handoff'), read };`, kept)).r;
+    ok(got && got.old === '1' && got.both === 'studio', 'localStorage came over; a key Studio already had keeps Studio\'s value', JSON.stringify(got));
+    ok(got && got.v === 2 && got.k1 === 'v' && got.a && got.a.note === 'studio', 'IndexedDB: raised to the old version (2, not past it), the missing store made, Studio\'s own record kept', JSON.stringify(got));
+    ok(got && got.blob === 'hello' && got.type === 'text/plain' && got.when === 5 && JSON.stringify(got.bytes) === '[1,2,3]' && JSON.stringify(got.tags) === '["x"]' && got.odd === 1, 'a record with a Blob, a Date, bytes and a Set comes over intact', JSON.stringify(got));
+    ok(got && got.handoff === false, 'hand-overs between apps are not carried');
+    ok(got && got.read > 0, 'a file the old app had opened still reopens in Studio (grants merged)', JSON.stringify(got && got.read));
+    const carried = JSON.parse(fs.readFileSync(path.join(own, 'carried.json'), 'utf8'));
+    ok(carried.bimcraft && carried.bimcraft.done === true && carried.bimcraft.tries === 1, 'carried.json records it, once', JSON.stringify(carried));
+    ok(snap(old) === before && !fs.existsSync(path.join(own, 'carry', 'bimcraft')), 'the old profile is untouched; the working copy is gone');
+    await s.end().catch(() => {}); driver.kill(); stopShells();
+    // 4. The next start goes straight to the hub (here from a per-app shortcut: SD.6's --app=<slug>).
+    driver = startDriver(path.join(dir, 'app'), home);
+    s = await session(['--app=modelcraft']);
+    const direct = await waitFor(async () => (await s.run(`return location.pathname;`)).r === '/index.html', 20000);
+    const again = JSON.parse(fs.readFileSync(path.join(own, 'carried.json'), 'utf8'));
+    ok(direct && again.bimcraft.tries === 1, 'the next start opens the hub straight away (carried once)');
+    ok(await waitFor(async () => (await s.run(`return (await window.cadcraftDesktop.windows.list()).some((w) => w.app === 'modelcraft');`)).r, 20000),
+      'Studio started with --app=modelcraft (a per-app shortcut) opens a ModelCraft window');
+    await s.end().catch(() => {});
+  } catch (e) {
+    fail++; console.log('  ✗ SD.8: ' + e.message);
   } finally {
     driver.kill();
   }

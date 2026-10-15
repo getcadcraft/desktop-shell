@@ -1,13 +1,14 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- The shell's sign-in window (docs/0.4-PART2.md C.2): shows the short code large while the person approves it on
-     getcadcraft.com/device. Talks only to window.cadcraftDesktop.account; never sees the token. Words: English for now
-     (listed for `lang` in docs/0.4-sessions/desktop.md). -->
+     getcadcraft.com/device. Talks only to window.cadcraftDesktop.account; never sees the token. Words: lang/<locale>.json
+     (keys desktop.account.*, desktop.reason.*) through i18n.js. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in to getcadcraft.com</title>
+<title data-t="desktop.account.title">Sign in to getcadcraft.com</title>
+<script src="i18n.js"></script>
 <style>
   :root { --sheet: #fbfaf7; --ink: #1d1f24; --ink-2: #5a5f6a; --line: #c9c6bd; --action: #b3122e; --on-action: #fff; color-scheme: light dark; }
   @media (prefers-color-scheme: dark) { :root { --sheet: #15181d; --ink: #e8e6e1; --ink-2: #a3a7b0; --line: #3a3f48; --action: #ff6b81; --on-action: #15181d; } }
@@ -26,56 +27,65 @@
   button:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
   .note { border-left: 4px solid var(--action); padding: .5rem .75rem; }
   [hidden] { display: none !important; }
+  /* Phones (0.5 PH.4): one column, the code never past the edge (it shrinks with the screen), touch-sized buttons. */
+  @media (max-width: 599px), (max-height: 520px) and (max-width: 1000px) {
+    main { padding: 1rem; }
+    .code { font-size: clamp(1.5rem, 9vw, 2.4rem); letter-spacing: .06em; padding: .6rem .4rem; overflow-wrap: anywhere; }
+    button { min-height: 2.75rem; }
+    .row > button { flex: 1 1 10rem; }
+    .note { overflow-wrap: anywhere; }
+  }
 </style>
 </head>
 <body>
 <main id="main">
   <section data-view="signed_out" hidden>
-    <h1>Sign in to getcadcraft.com</h1>
-    <p>Signing in lets this app open and save your cloud drawings. You get a short code here and approve it on the website,
-      in your own browser. Nothing secret is typed or copied.</p>
+    <h1 data-t="desktop.account.title"></h1>
+    <p data-t="desktop.account.signed_out.text"></p>
     <p class="note" data-reason hidden></p>
-    <div class="row"><button class="primary" data-act="sign-in">Get a code</button><button data-act="close">Not now</button></div>
+    <div class="row"><button class="primary" data-act="sign-in" data-t="desktop.account.get_code"></button><button data-act="close" data-t="desktop.account.not_now"></button></div>
   </section>
 
   <section data-view="waiting" hidden>
-    <h1>Approve this code on the website</h1>
-    <p>Your browser has opened getcadcraft.com/device. Check that it shows this code, then approve it.</p>
+    <h1 data-t="desktop.account.waiting.title"></h1>
+    <p data-t="desktop.account.waiting.text"></p>
     <p class="code" data-code aria-live="polite"></p>
-    <p class="muted">Only approve a code shown here, in your own app. <span data-left></span></p>
-    <div class="row"><button class="primary" data-act="open">Open getcadcraft.com/device</button><button data-act="cancel">Cancel</button></div>
+    <p class="muted"><span data-t="desktop.account.waiting.own"></span> <span data-left></span></p>
+    <div class="row"><button class="primary" data-act="open" data-t="desktop.account.open_device"></button><button data-act="cancel" data-t="desktop.account.cancel"></button></div>
   </section>
 
   <section data-view="signed_in" hidden>
-    <h1>Signed in</h1>
+    <h1 data-t="desktop.account.signed_in.title"></h1>
     <p data-who></p>
-    <p class="muted">This computer stays signed in until you sign out here, or remove it on getcadcraft.com under
-      Account, Security.</p>
-    <div class="row"><button data-act="sign-out">Sign out</button><button class="primary" data-act="close">Done</button></div>
+    <p class="muted" data-t="desktop.account.signed_in.text"></p>
+    <div class="row"><button data-act="sign-out" data-t="desktop.account.sign_out"></button><button class="primary" data-act="close" data-t="desktop.account.done"></button></div>
   </section>
 </main>
 <script>
-(() => {
+window.ccShellI18n.ready.then(({ t }) => {
   const D = window.cadcraftDesktop;
-  if (!D || !D.account) { document.body.textContent = 'This window works only inside the CadCraft desktop app.'; return; }
+  if (!D || !D.account) { document.body.textContent = t('desktop.account.only_desktop'); return; }
+  // A reason the shell gives a code for is said in the person's language; anything else as the shell/website worded it.
+  const REASONS = ['throttled', 'expired', 'denied', 'revoked', 'offline_signout', 'keystore'];
+  const said = (s) => (s.reason && REASONS.includes(s.reason) ? t('desktop.reason.' + s.reason) : s.message || '');
   const $ = (s) => document.querySelector(s);
   let st = null, timer = 0;
   const render = (s) => {
     st = s;
     document.querySelectorAll('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== s.state; });
     const r = $('[data-reason]');
-    r.textContent = s.message || '';
-    r.hidden = !s.message;
+    r.textContent = said(s);
+    r.hidden = !r.textContent;
     if (s.state === 'waiting') $('[data-code]').textContent = s.code || '';
     if (s.state === 'signed_in') {
       const u = s.user || {};
-      $('[data-who]').textContent = u.name ? `${u.name} (${u.email})` : (u.email || 'Signed in.');
+      $('[data-who]').textContent = u.name ? `${u.name} (${u.email})` : (u.email || t('desktop.account.signed_in.who'));
     }
     clearInterval(timer);
     if (s.state === 'waiting' && s.expiresAt) {
       const tick = () => {
         const left = Math.max(0, s.expiresAt - Math.floor(Date.now() / 1000));
-        $('[data-left]').textContent = left > 0 ? `The code works for ${Math.ceil(left / 60)} more minute${left > 60 ? 's' : ''}.` : 'The code has run out.';
+        $('[data-left]').textContent = left > 0 ? t('desktop.account.waiting.left', { n: Math.ceil(left / 60) }) : t('desktop.account.waiting.out');
       };
       tick(); timer = setInterval(tick, 15000);
     }
@@ -99,7 +109,7 @@
     }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') D.account.closeWindow(); });
-})();
+});
 </script>
 </body>
 </html>

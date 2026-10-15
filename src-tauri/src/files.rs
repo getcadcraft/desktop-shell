@@ -6,6 +6,15 @@
 //! double-click / "Open with", or inside a folder they picked. Anything else is refused with `not_allowed`, so a bug
 //! or a hostile script in the page cannot read the disk. Grants are kept (most recent first, capped) in the app's
 //! data folder, so the recent-files list still reopens after a restart.
+//!
+//! **Tablets (TB.1).** Files there are documents behind a content URI (Android) or a security-scoped bookmark (iPad),
+//! never paths (mobile.rs). The page gets a path of our own for each: `cc-doc:/<key>/<name>` for a document,
+//! `cc-doc:/<key>/<folder name>/<path below it>` inside a chosen folder, so the apps' file names and extensions read as
+//! usual (host.js `baseName`, `dirName`). The grant list keeps key → uri; an unknown key is `not_allowed` like any path
+//! the person never chose.
+
+// Tablets: launch arguments, second starts and the desktop's dialogs don't exist there (TB.1).
+#![cfg_attr(mobile, allow(dead_code))]
 
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
@@ -13,15 +22,57 @@ use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
+#[cfg(desktop)]
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder};
 
 const MAX_FILES: usize = 1000;
 const MAX_DIRS: usize = 100;
+/// Android keeps at most 512 lasting document permissions per app (128 before Android 11); we stay well under it and
+/// give the oldest back.
+#[cfg_attr(desktop, allow(dead_code))]
+const MAX_DOCS: usize = 400;
+/// The page's own name for a tablet document (see above).
+pub const DOC_PREFIX: &str = "cc-doc:/";
 
 #[derive(Default, Serialize, Deserialize)]
 struct GrantList {
     files: Vec<String>,
     dirs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    docs: Vec<DocGrant>,
+}
+
+/// A tablet document or folder the person chose: our key, the system's uri, its name when chosen.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct DocGrant {
+    pub key: String,
+    pub uri: String,
+    pub name: String,
+    #[serde(default)]
+    pub dir: bool,
+}
+
+/// `cc-doc:/<key>/<name>[/<below>…]` → (key, the parts after the key). Plain names only: no "", ".", "..", "\\" or ":".
+pub fn parse_doc_path(path: &str) -> Option<(String, Vec<String>)> {
+    let rest = path.strip_prefix(DOC_PREFIX)?;
+    let mut parts = rest.split('/');
+    let key = parts.next()?.to_string();
+    if key.is_empty() || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let tail: Vec<String> = parts.map(String::from).collect();
+    if tail.is_empty() || tail.iter().any(|p| p.is_empty() || p == "." || p == ".." || p.contains(['\\', '\0'])) {
+        return None;
+    }
+    Some((key, tail))
+}
+
+/// The page's path for a granted document: the name made safe for one path part.
+#[cfg_attr(desktop, allow(dead_code))]
+pub fn doc_path(key: &str, name: &str) -> String {
+    let n: String = name.chars().map(|c| if matches!(c, '/' | '\\' | '\0') { '_' } else { c }).collect();
+    let n = if n.is_empty() || n == "." || n == ".." { "file".to_string() } else { n };
+    format!("{DOC_PREFIX}{key}/{n}")
 }
 
 pub struct Grants {
@@ -80,7 +131,70 @@ impl Grants {
         self.save(&l);
     }
 
+    /// SD.8: add another install's grants.json (a 0.4 per-app install Studio replaces), after this one's own (so this
+    /// install's recent files stay first), within the caps. → how many were added.
+    pub fn merge_from(&self, other: &Path) -> usize {
+        let Some(old) = std::fs::read(other).ok().and_then(|b| serde_json::from_slice::<GrantList>(&b).ok()) else { return 0 };
+        let mut l = self.list.lock().unwrap();
+        let mut n = 0;
+        for f in old.files {
+            if l.files.len() < MAX_FILES && !l.files.contains(&f) && norm(Path::new(&f)).as_deref() == Some(f.as_str()) {
+                l.files.push(f);
+                n += 1;
+            }
+        }
+        for d in old.dirs {
+            if l.dirs.len() < MAX_DIRS && !l.dirs.contains(&d) && norm(Path::new(&d)).as_deref() == Some(d.as_str()) {
+                l.dirs.push(d);
+                n += 1;
+            }
+        }
+        if n > 0 {
+            self.save(&l);
+        }
+        n
+    }
+
+    /// Tablets: grant a document (or a folder, `dir`) the person chose → (its page path, uris given back to make room).
+    /// The same uri keeps its key, so a file opened again is the same recent file.
+    #[cfg_attr(desktop, allow(dead_code))]
+    pub fn grant_doc(&self, uri: &str, name: &str, dir: bool) -> (String, Vec<String>) {
+        let mut l = self.list.lock().unwrap();
+        let key = match l.docs.iter().position(|d| d.uri == uri) {
+            Some(i) => l.docs.remove(i).key,
+            None => loop {
+                let mut b = [0u8; 8];
+                let _ = getrandom::fill(&mut b);
+                let k: String = b.iter().map(|x| format!("{x:02x}")).collect();
+                if !l.docs.iter().any(|d| d.key == k) {
+                    break k;
+                }
+            },
+        };
+        let path = doc_path(&key, name);
+        l.docs.insert(0, DocGrant { key, uri: uri.to_string(), name: name.to_string(), dir });
+        let evicted: Vec<String> = if l.docs.len() > MAX_DOCS { l.docs.split_off(MAX_DOCS).into_iter().map(|d| d.uri).collect() } else { vec![] };
+        self.save(&l);
+        (path, evicted)
+    }
+
+    /// Tablets: the grant behind a page path, and the path below it inside a chosen folder (empty for the document or
+    /// the folder itself). A document's path may carry another name (renamed since); a folder's parts are checked.
+    pub fn doc_for(&self, path: &str) -> Option<(DocGrant, Vec<String>)> {
+        let (key, tail) = parse_doc_path(path)?;
+        let l = self.list.lock().unwrap();
+        let g = l.docs.iter().find(|d| d.key == key)?.clone();
+        let below: Vec<String> = tail[1..].to_vec();
+        if !g.dir && !below.is_empty() {
+            return None;
+        }
+        Some((g, below))
+    }
+
     pub fn allows(&self, p: &Path) -> bool {
+        if let Some(s) = p.to_str().filter(|s| s.starts_with(DOC_PREFIX)) {
+            return self.doc_for(s).is_some();
+        }
         let Some(n) = norm(p) else { return false };
         let l = self.list.lock().unwrap();
         let sep = if cfg!(windows) { ['\\', '/'] } else { ['/', '/'] };
@@ -125,6 +239,7 @@ pub struct DialogOpts {
     default_path: Option<String>,
 }
 
+#[cfg(desktop)]
 fn builder<R: Runtime>(win: &WebviewWindow<R>, o: &DialogOpts) -> FileDialogBuilder<R> {
     let mut b = win.dialog().file().set_parent(win);
     for f in &o.filters {
@@ -155,10 +270,74 @@ pub fn test_answer() -> Option<Option<Vec<PathBuf>>> {
     None
 }
 
+#[cfg(desktop)]
 fn into_paths(v: Vec<tauri_plugin_dialog::FilePath>) -> Vec<PathBuf> {
     v.into_iter().filter_map(|f| f.into_path().ok()).collect()
 }
 
+/// Tablets: a blocking plugin call (a picker waits for the person) off the async runtime's threads.
+#[cfg(mobile)]
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+/// Tablets: grant what the picker returned → page paths; uris pushed out of the list get their permission back.
+#[cfg(mobile)]
+fn grant_docs(grants: &Grants, docs: &[crate::mobile::Doc]) -> Vec<String> {
+    docs.iter()
+        .map(|d| {
+            let (path, evicted) = grants.grant_doc(&d.uri, &d.name, d.dir);
+            evicted.iter().for_each(|u| crate::mobile::release(u));
+            path
+        })
+        .collect()
+}
+
+/// Tablets: the system's uri for a page path inside the grants (a chosen folder's file found by its path; `create`
+/// makes it when saving).
+#[cfg(mobile)]
+fn doc_uri(grants: &Grants, path: &str, create: bool) -> Result<String, String> {
+    let (g, below) = grants.doc_for(path).ok_or("not_allowed: the app can reach only files you opened or saved, or folders you chose")?;
+    if below.is_empty() {
+        return Ok(g.uri);
+    }
+    crate::mobile::find(&g.uri, &below, create)?.map(|d| d.uri).ok_or_else(|| format!("not_found: {path}"))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn cc_open_dialog(grants: State<'_, Grants>, opts: DialogOpts) -> Result<Option<Vec<String>>, String> {
+    let multiple = opts.multiple;
+    let docs = blocking(move || crate::mobile::open_documents(multiple)).await?;
+    Ok((!docs.is_empty()).then(|| grant_docs(&grants, &docs)))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn cc_save_dialog(grants: State<'_, Grants>, opts: DialogOpts) -> Result<Option<String>, String> {
+    let name = opts
+        .default_path
+        .as_deref()
+        .and_then(|d| d.rsplit(['/', '\\']).next())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("Untitled")
+        .to_string();
+    let doc = blocking(move || crate::mobile::create_document(&name, "application/octet-stream")).await?;
+    Ok(doc.map(|d| grant_docs(&grants, &[d]).remove(0)))
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn cc_open_folder_dialog(grants: State<'_, Grants>, opts: DialogOpts) -> Result<Option<String>, String> {
+    let _ = opts;
+    let tree = blocking(crate::mobile::open_tree).await?;
+    Ok(tree.map(|mut d| {
+        d.dir = true;
+        grant_docs(&grants, &[d]).remove(0)
+    }))
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn cc_open_dialog<R: Runtime>(
     win: WebviewWindow<R>,
@@ -185,6 +364,7 @@ pub async fn cc_open_dialog<R: Runtime>(
     }))
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn cc_save_dialog<R: Runtime>(
     win: WebviewWindow<R>,
@@ -217,6 +397,7 @@ pub async fn cc_save_dialog<R: Runtime>(
     }))
 }
 
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn cc_open_folder_dialog<R: Runtime>(
     win: WebviewWindow<R>,
@@ -239,9 +420,36 @@ pub async fn cc_open_folder_dialog<R: Runtime>(
 
 #[tauri::command]
 pub async fn cc_read_file(grants: State<'_, Grants>, path: String) -> Result<Response, String> {
+    #[cfg(mobile)]
+    {
+        if path.starts_with(DOC_PREFIX) {
+            let uri = doc_uri(&grants, &path, false)?;
+            let bytes = blocking(move || {
+                use std::io::Read;
+                let mut v = Vec::new();
+                crate::mobile::open(&uri, "r")?.read_to_end(&mut v).map_err(|e| io_err(&e))?;
+                Ok(v)
+            })
+            .await?;
+            return Ok(Response::new(bytes));
+        }
+    }
     let p = check(&grants, &path)?;
     let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(p)).await.map_err(|e| e.to_string())?;
     bytes.map(Response::new).map_err(|e| io_err(&e))
+}
+
+/// The bytes a page sent: raw on the desktop; on Android Tauri's IPC carries JSON only (its WebView can't read a request
+/// body), so the bridge sends `{b64}` there (bridge.js); a plain array of byte values is taken too. Anything else: None.
+pub fn body_bytes(body: &InvokeBody) -> Option<Vec<u8>> {
+    use base64::Engine;
+    match body {
+        InvokeBody::Raw(b) => Some(b.clone()),
+        InvokeBody::Json(serde_json::Value::Null) => Some(Vec::new()),
+        InvokeBody::Json(serde_json::Value::Object(o)) => o.get("b64")?.as_str().and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok()),
+        InvokeBody::Json(serde_json::Value::Array(a)) => a.iter().map(|v| v.as_u64().filter(|n| *n < 256).map(|n| n as u8)).collect(),
+        _ => None,
+    }
 }
 
 /// Body = the bytes; header `x-cc-path` = the target path, percent-encoded (encodeURIComponent).
@@ -253,7 +461,22 @@ pub async fn cc_write_file(grants: State<'_, Grants>, request: Request<'_>) -> R
         .and_then(|v| v.to_str().ok())
         .and_then(decode_component)
         .ok_or("missing path")?;
-    let InvokeBody::Raw(bytes) = request.body() else { return Err("expected raw bytes".into()) };
+    let bytes = &body_bytes(request.body()).ok_or("expected bytes")?;
+    // Tablets: a document is rewritten in place (truncated, then written): a provider's document can't be replaced by
+    // rename the way a file on disk is.
+    #[cfg(mobile)]
+    {
+        if path.starts_with(DOC_PREFIX) {
+            let uri = doc_uri(&grants, &path, true)?;
+            let bytes = bytes.clone();
+            return blocking(move || {
+                use std::io::Write;
+                let mut f = crate::mobile::open(&uri, "wt")?;
+                f.write_all(&bytes).and_then(|_| f.sync_all()).map_err(|e| io_err(&e))
+            })
+            .await;
+        }
+    }
     let p = check(&grants, &path)?;
     let bytes = bytes.clone();
     tauri::async_runtime::spawn_blocking(move || write_atomic(&p, &bytes)).await.map_err(|e| e.to_string())?
@@ -288,7 +511,19 @@ pub struct Stat {
 }
 
 #[tauri::command]
-pub fn cc_stat(grants: State<'_, Grants>, path: String) -> Result<Option<Stat>, String> {
+pub async fn cc_stat(grants: State<'_, Grants>, path: String) -> Result<Option<Stat>, String> {
+    #[cfg(mobile)]
+    {
+        if path.starts_with(DOC_PREFIX) {
+            let uri = match doc_uri(&grants, &path, false) {
+                Ok(u) => u,
+                Err(e) if e.starts_with("not_found") => return Ok(None),
+                Err(e) => return Err(e),
+            };
+            let doc = blocking(move || crate::mobile::stat(&uri)).await?;
+            return Ok(doc.filter(|d| !d.dir).map(|d| Stat { size: d.size.unwrap_or(0), mtime: d.mtime }));
+        }
+    }
     let p = check(&grants, &path)?;
     Ok(std::fs::metadata(p).ok().filter(|m| m.is_file()).map(|m| Stat {
         size: m.len(),
@@ -303,7 +538,20 @@ pub struct DirEntry {
 }
 
 #[tauri::command]
-pub fn cc_list_dir(grants: State<'_, Grants>, path: String) -> Result<Vec<DirEntry>, String> {
+pub async fn cc_list_dir(grants: State<'_, Grants>, path: String) -> Result<Vec<DirEntry>, String> {
+    #[cfg(mobile)]
+    {
+        if path.starts_with(DOC_PREFIX) {
+            let (g, below) = grants.doc_for(&path).ok_or("not_allowed: the app can reach only folders you chose")?;
+            if !g.dir {
+                return Err("not_found: not a folder".into());
+            }
+            let docs = blocking(move || crate::mobile::children(&g.uri, &below)).await?;
+            let mut out: Vec<DirEntry> = docs.into_iter().map(|d| DirEntry { name: d.name, dir: d.dir }).collect();
+            out.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+            return Ok(out);
+        }
+    }
     let p = check(&grants, &path)?;
     let mut out: Vec<DirEntry> = std::fs::read_dir(p)
         .map_err(|e| io_err(&e))?
@@ -346,16 +594,46 @@ pub struct Launch {
     drained: Mutex<bool>,
 }
 
-/// Command-line arguments → existing files (relative ones against `cwd`); flags are skipped.
+/// Command-line arguments → existing files (relative ones against `cwd`); flags are skipped. A `file://` URI (what a
+/// Linux desktop passes for `%U`, which Studio's entry uses so it can also take `ccstudio://` links) becomes its path.
 pub fn files_from_args<I: IntoIterator<Item = String>>(args: I, cwd: &Path) -> Vec<PathBuf> {
     args.into_iter()
         .filter(|a| !a.starts_with('-'))
-        .map(|a| {
-            let p = PathBuf::from(&a);
-            if p.is_absolute() { p } else { cwd.join(p) }
-        })
+        .filter_map(|a| if a.starts_with("file://") { path_from_file_uri(&a) } else { Some(PathBuf::from(&a)) })
+        .map(|p| if p.is_absolute() { p } else { cwd.join(p) })
         .filter(|p| p.is_file() && norm(p).is_some())
         .collect()
+}
+
+/// `file:///home/me/a%20b.dwg` (or `file://localhost/…`) → `/home/me/a b.dwg`; other hosts and bad escapes → None.
+pub fn path_from_file_uri(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let (b, mut out, mut i) = (rest.as_bytes(), Vec::with_capacity(rest.len()), 0);
+    while i < b.len() {
+        if b[i] == b'%' {
+            let h = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(h, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Some(PathBuf::from(std::ffi::OsString::from_vec(out)))
+    }
+    #[cfg(not(unix))]
+    {
+        // file:///C:/x → C:/x
+        let s = String::from_utf8(out).ok()?;
+        Some(PathBuf::from(s.strip_prefix('/').filter(|t| t.as_bytes().get(1) == Some(&b':')).unwrap_or(&s)))
+    }
 }
 
 impl Launch {
@@ -398,6 +676,20 @@ mod tests {
         d
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn file_uris_become_paths() {
+        assert_eq!(path_from_file_uri("file:///home/me/a%20b.dwg"), Some(PathBuf::from("/home/me/a b.dwg")));
+        assert_eq!(path_from_file_uri("file://localhost/tmp/x.dxf"), Some(PathBuf::from("/tmp/x.dxf")));
+        assert_eq!(path_from_file_uri("file://server/share/x.dwg"), None);
+        assert_eq!(path_from_file_uri("file:///bad%zz"), None);
+        let d = tmp("uri");
+        let f = d.join("plan one.dwg");
+        std::fs::write(&f, b"x").unwrap();
+        let uri = format!("file://{}", f.to_string_lossy().replace(' ', "%20"));
+        assert_eq!(files_from_args(vec![uri, "ccstudio://join/AB3K7MNP#abcdefghijklmnopqrstuv".into()], &d), vec![f]);
+    }
+
     #[test]
     fn grants_cover_chosen_files_and_folders_only() {
         let d = tmp("grants");
@@ -423,6 +715,53 @@ mod tests {
         let again = Grants::load(Some(store));
         assert!(again.allows(&f) && again.allows(&folder.join("x")), "grants survive a restart");
         std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn tablet_documents_by_key() {
+        let d = tmp("docs");
+        let store = d.join("grants.json");
+        let g = Grants::load(Some(store.clone()));
+        let (p, evicted) = g.grant_doc("content://p/document/1", "Plan A.dwg", false);
+        assert!(evicted.is_empty());
+        assert!(p.starts_with(DOC_PREFIX) && p.ends_with("/Plan A.dwg"), "{p}");
+        assert_eq!(g.grant_doc("content://p/document/1", "Plan A.dwg", false).0, p, "the same document keeps its key");
+        assert!(g.allows(Path::new(&p)));
+        assert_eq!(g.doc_for(&p).unwrap().0.uri, "content://p/document/1");
+        assert!(g.doc_for(&format!("{p}/x.dwg")).is_none(), "nothing below a document");
+        let (f, _) = g.grant_doc("content://p/tree/7", "Job", true);
+        let (tree, below) = g.doc_for(&format!("{f}/sheets/A-101.dwg")).unwrap();
+        assert_eq!((tree.uri.as_str(), below), ("content://p/tree/7", vec!["sheets".to_string(), "A-101.dwg".to_string()]));
+        assert!(g.doc_for(&format!("{f}/../x.dwg")).is_none() && g.doc_for(&format!("{f}//x.dwg")).is_none());
+        assert!(!g.allows(Path::new("cc-doc:/0123456789abcdef/x.dwg")), "an unknown key is not allowed");
+        assert!(parse_doc_path("cc-doc:/zz/x").is_none() && parse_doc_path("cc-doc:/ab").is_none());
+        assert_eq!(doc_path("ab", "a/b.dwg"), "cc-doc:/ab/a_b.dwg");
+        assert_eq!(doc_path("ab", ".."), "cc-doc:/ab/file");
+        assert!(Grants::load(Some(store.clone())).allows(Path::new(&p)), "documents survive a restart");
+        let mut out = vec![];
+        for i in 0..MAX_DOCS {
+            out.extend(g.grant_doc(&format!("content://p/document/n{i}"), "n.dwg", false).1);
+        }
+        assert_eq!(out, vec!["content://p/document/1".to_string(), "content://p/tree/7".to_string()], "the oldest are given back");
+        assert!(!g.allows(Path::new(&p)));
+        // A desktop list written before tablets existed still loads, and a desktop list never gains a docs field.
+        std::fs::write(&store, br#"{"files":["/a/b.dwg"],"dirs":[]}"#).unwrap();
+        let old = Grants::load(Some(store.clone()));
+        old.grant_file(Path::new("/a/c.dwg"));
+        assert!(!std::fs::read_to_string(&store).unwrap().contains("docs"));
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn bodies_raw_base64_or_array() {
+        use serde_json::json;
+        assert_eq!(body_bytes(&InvokeBody::Raw(vec![1, 2])), Some(vec![1, 2]));
+        assert_eq!(body_bytes(&InvokeBody::Json(json!({ "b64": "AQL/" }))), Some(vec![1, 2, 255]));
+        assert_eq!(body_bytes(&InvokeBody::Json(json!([1, 2, 255]))), Some(vec![1, 2, 255]));
+        assert_eq!(body_bytes(&InvokeBody::Json(json!(null))), Some(vec![]));
+        assert_eq!(body_bytes(&InvokeBody::Json(json!([1, 256]))), None);
+        assert_eq!(body_bytes(&InvokeBody::Json(json!({ "b64": "not base64!" }))), None);
+        assert_eq!(body_bytes(&InvokeBody::Json(json!("text"))), None);
     }
 
     #[test]

@@ -1,0 +1,506 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0894EE522E256B1AFFB99749 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 813A294E6186CF3DE7613BC0 /* LaunchScreen.storyboard */; };
+		1C31AED4BA40798A8C33393F /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 86ECC6DCA0B29F7A37E957A0 /* QuartzCore.framework */; };
+		2921E58F99CA57FF2BDA905B /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 89C1ED51B95278C8F7B582E2 /* main.mm */; };
+		2F87A483DB9615C318F90022 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C630B3AE5370C45D5EE1215B /* MetalKit.framework */; };
+		2FF7E9B0FA06A4463FC1A23D /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D605F3129431A6FE4BEEF6DD /* Metal.framework */; };
+		500C703F8ED934DBEF38A074 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8810E70A1FD423F55EB5A7CC /* WebKit.framework */; };
+		67FF96C653FD2621B483752D /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4EEEC969A54409BEDEC95A45 /* Security.framework */; };
+		8D17F389835E7701782F1721 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 35E49F7AD5B62A6E8511600F /* libapp.a */; };
+		9C4DD1250481423F93321739 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 768360676312872EE0BEB245 /* Assets.xcassets */; };
+		D66C194DA357C0F0EDCF875A /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 1B0C83162FCB4038FDADF8CE /* assets */; };
+		EB9D415DA73635C23A5A0931 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AC6D5B46D19E4CA6A2ABE1E9 /* UIKit.framework */; };
+		F00680E8B13D55112EC22658 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12DC0E1FB2032C59FA3CF480 /* CoreGraphics.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		02EAD630CE5695501A0DF207 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		0C18A3183185D0FCE7344E53 /* carry.rs */ = {isa = PBXFileReference; path = carry.rs; sourceTree = "<group>"; };
+		0C6A453D726D2A1E65747928 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		11770A12A3B69458BD90DD56 /* ws.rs */ = {isa = PBXFileReference; path = ws.rs; sourceTree = "<group>"; };
+		12DC0E1FB2032C59FA3CF480 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		1B0C83162FCB4038FDADF8CE /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		1B8F4B2A64353755AAB928FE /* windows.rs */ = {isa = PBXFileReference; path = windows.rs; sourceTree = "<group>"; };
+		2175E0645A0FAC1C610710EB /* http.rs */ = {isa = PBXFileReference; path = http.rs; sourceTree = "<group>"; };
+		35E49F7AD5B62A6E8511600F /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		482C0E81E544194B7BDDCF0E /* mod.rs */ = {isa = PBXFileReference; path = mod.rs; sourceTree = "<group>"; };
+		4B5B4501C3F37DA59B149D71 /* links.rs */ = {isa = PBXFileReference; path = links.rs; sourceTree = "<group>"; };
+		4EEEC969A54409BEDEC95A45 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		5173F5452BC6D8C78FC50E55 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		59C561DD0A3ABC37E63AFDF9 /* account.rs */ = {isa = PBXFileReference; path = account.rs; sourceTree = "<group>"; };
+		5C4FF407AF40F807BEEA8F12 /* mobile.rs */ = {isa = PBXFileReference; path = mobile.rs; sourceTree = "<group>"; };
+		64FAF3B38B7C8E3F1432D53F /* files.rs */ = {isa = PBXFileReference; path = files.rs; sourceTree = "<group>"; };
+		768360676312872EE0BEB245 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7AE4EE6EBCB2968C923F67C9 /* relay.rs */ = {isa = PBXFileReference; path = relay.rs; sourceTree = "<group>"; };
+		7E5541C7DCC58263FFDDFFFE /* updates.rs */ = {isa = PBXFileReference; path = updates.rs; sourceTree = "<group>"; };
+		813A294E6186CF3DE7613BC0 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		86B093B59E1509CB3FF6D704 /* studio_live.rs */ = {isa = PBXFileReference; path = studio_live.rs; sourceTree = "<group>"; };
+		86ECC6DCA0B29F7A37E957A0 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		8810E70A1FD423F55EB5A7CC /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		89C1ED51B95278C8F7B582E2 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		8A96334C2C388451FD849077 /* crypto.rs */ = {isa = PBXFileReference; path = crypto.rs; sourceTree = "<group>"; };
+		8F6DBAAD4CA7B266F81BF5EC /* msg.rs */ = {isa = PBXFileReference; path = msg.rs; sourceTree = "<group>"; };
+		A5031770FE6C2727DAFA1B35 /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		AC6D5B46D19E4CA6A2ABE1E9 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		AD95529E3D71C3FCFDFA03D8 /* session.rs */ = {isa = PBXFileReference; path = session.rs; sourceTree = "<group>"; };
+		C1D359BD28DDD9A99751635A /* cadcraft-desktop_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "cadcraft-desktop_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C630B3AE5370C45D5EE1215B /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		D43580ECE77B1FC0AF6B2E98 /* protocol.rs */ = {isa = PBXFileReference; path = protocol.rs; sourceTree = "<group>"; };
+		D605F3129431A6FE4BEEF6DD /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		DED973C14FA7AB306BB79C1E /* cadcraft-desktop_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "cadcraft-desktop_iOS.entitlements"; sourceTree = "<group>"; };
+		E56CA10ED09A77B010D5CA0F /* net.rs */ = {isa = PBXFileReference; path = net.rs; sourceTree = "<group>"; };
+		E694D263D9BF3F62C927D154 /* control.rs */ = {isa = PBXFileReference; path = control.rs; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8C1207266241824E535721E0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8D17F389835E7701782F1721 /* libapp.a in Frameworks */,
+				F00680E8B13D55112EC22658 /* CoreGraphics.framework in Frameworks */,
+				2FF7E9B0FA06A4463FC1A23D /* Metal.framework in Frameworks */,
+				2F87A483DB9615C318F90022 /* MetalKit.framework in Frameworks */,
+				1C31AED4BA40798A8C33393F /* QuartzCore.framework in Frameworks */,
+				67FF96C653FD2621B483752D /* Security.framework in Frameworks */,
+				EB9D415DA73635C23A5A0931 /* UIKit.framework in Frameworks */,
+				500C703F8ED934DBEF38A074 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2132A39A2DCEBE76380519C1 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				12DC0E1FB2032C59FA3CF480 /* CoreGraphics.framework */,
+				35E49F7AD5B62A6E8511600F /* libapp.a */,
+				D605F3129431A6FE4BEEF6DD /* Metal.framework */,
+				C630B3AE5370C45D5EE1215B /* MetalKit.framework */,
+				86ECC6DCA0B29F7A37E957A0 /* QuartzCore.framework */,
+				4EEEC969A54409BEDEC95A45 /* Security.framework */,
+				AC6D5B46D19E4CA6A2ABE1E9 /* UIKit.framework */,
+				8810E70A1FD423F55EB5A7CC /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		2C5DF593BB10F5D79D2DD6F6 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				A5031770FE6C2727DAFA1B35 /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		31E2D51B79F7D7E074544317 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C1D359BD28DDD9A99751635A /* cadcraft-desktop_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3313291586878E8EECAE4555 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				C258CFE7A7A7C4E03CDCFC7C /* cadcraft-desktop */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		37A123BE5E490859024973ED /* src */ = {
+			isa = PBXGroup;
+			children = (
+				59C561DD0A3ABC37E63AFDF9 /* account.rs */,
+				0C18A3183185D0FCE7344E53 /* carry.rs */,
+				E694D263D9BF3F62C927D154 /* control.rs */,
+				64FAF3B38B7C8E3F1432D53F /* files.rs */,
+				02EAD630CE5695501A0DF207 /* lib.rs */,
+				4B5B4501C3F37DA59B149D71 /* links.rs */,
+				0C6A453D726D2A1E65747928 /* main.rs */,
+				5C4FF407AF40F807BEEA8F12 /* mobile.rs */,
+				D43580ECE77B1FC0AF6B2E98 /* protocol.rs */,
+				86B093B59E1509CB3FF6D704 /* studio_live.rs */,
+				7E5541C7DCC58263FFDDFFFE /* updates.rs */,
+				1B8F4B2A64353755AAB928FE /* windows.rs */,
+				90E46A5E67C25FF69D46DCA4 /* live */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		78544577D6508BE3049B3B94 /* cadcraft-desktop_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				DED973C14FA7AB306BB79C1E /* cadcraft-desktop_iOS.entitlements */,
+				5173F5452BC6D8C78FC50E55 /* Info.plist */,
+			);
+			path = "cadcraft-desktop_iOS";
+			sourceTree = "<group>";
+		};
+		82D1F4D74CE5524573402B80 = {
+			isa = PBXGroup;
+			children = (
+				1B0C83162FCB4038FDADF8CE /* assets */,
+				768360676312872EE0BEB245 /* Assets.xcassets */,
+				813A294E6186CF3DE7613BC0 /* LaunchScreen.storyboard */,
+				78544577D6508BE3049B3B94 /* cadcraft-desktop_iOS */,
+				91B3998231EA55F5E8C1AE90 /* Externals */,
+				3313291586878E8EECAE4555 /* Sources */,
+				37A123BE5E490859024973ED /* src */,
+				2132A39A2DCEBE76380519C1 /* Frameworks */,
+				31E2D51B79F7D7E074544317 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		90E46A5E67C25FF69D46DCA4 /* live */ = {
+			isa = PBXGroup;
+			children = (
+				8A96334C2C388451FD849077 /* crypto.rs */,
+				2175E0645A0FAC1C610710EB /* http.rs */,
+				482C0E81E544194B7BDDCF0E /* mod.rs */,
+				8F6DBAAD4CA7B266F81BF5EC /* msg.rs */,
+				E56CA10ED09A77B010D5CA0F /* net.rs */,
+				7AE4EE6EBCB2968C923F67C9 /* relay.rs */,
+				AD95529E3D71C3FCFDFA03D8 /* session.rs */,
+				11770A12A3B69458BD90DD56 /* ws.rs */,
+			);
+			path = live;
+			sourceTree = "<group>";
+		};
+		91B3998231EA55F5E8C1AE90 /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+		C258CFE7A7A7C4E03CDCFC7C /* cadcraft-desktop */ = {
+			isa = PBXGroup;
+			children = (
+				89C1ED51B95278C8F7B582E2 /* main.mm */,
+				2C5DF593BB10F5D79D2DD6F6 /* bindings */,
+			);
+			path = "cadcraft-desktop";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		60C71F0219AA82DD69D882F6 /* cadcraft-desktop_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1BF4E22CE3E7A027B5C313FF /* Build configuration list for PBXNativeTarget "cadcraft-desktop_iOS" */;
+			buildPhases = (
+				F73013796047815FF1260BA5 /* Build Rust Code */,
+				50632D39ECF1595CE511E393 /* Sources */,
+				61E06CD1EBF590396CD17273 /* Resources */,
+				8C1207266241824E535721E0 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "cadcraft-desktop_iOS";
+			packageProductDependencies = (
+			);
+			productName = "cadcraft-desktop_iOS";
+			productReference = C1D359BD28DDD9A99751635A /* cadcraft-desktop_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B8CA3EC828D0B406AA2CFEC1 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 2B476E24193296A15D728488 /* Build configuration list for PBXProject "cadcraft-desktop" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 82D1F4D74CE5524573402B80;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 31E2D51B79F7D7E074544317 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				60C71F0219AA82DD69D882F6 /* cadcraft-desktop_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		61E06CD1EBF590396CD17273 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9C4DD1250481423F93321739 /* Assets.xcassets in Resources */,
+				0894EE522E256B1AFFB99749 /* LaunchScreen.storyboard in Resources */,
+				D66C194DA357C0F0EDCF875A /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F73013796047815FF1260BA5 /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cargo tauri ios xcode-script -v --platform \"${PLATFORM_DISPLAY_NAME:?}\" --sdk-root \"${SDKROOT:?}\" --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration \"${CONFIGURATION:?}\" ${FORCE_COLOR} ${ARCHS:?}\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		50632D39ECF1595CE511E393 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2921E58F99CA57FF2BDA905B /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A199ADED91D84D3E245C2E7 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+		72EB63C2B91115B9BC4EC08E /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		7EDA1926D365854124505369 /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "cadcraft-desktop_iOS/cadcraft-desktop_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "cadcraft-desktop_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.getcadcraft.studio;
+				PRODUCT_NAME = "CadCraft Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "2";
+				VALID_ARCHS = arm64;
+				DEVELOPMENT_TEAM = "KXB5X8ZLX7";
+			};
+			name = release;
+		};
+		9EA1C8FD9CDE3FD6EA757DFE /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "cadcraft-desktop_iOS/cadcraft-desktop_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "cadcraft-desktop_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.getcadcraft.studio;
+				PRODUCT_NAME = "CadCraft Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "2";
+				VALID_ARCHS = arm64;
+				DEVELOPMENT_TEAM = "KXB5X8ZLX7";
+			};
+			name = debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1BF4E22CE3E7A027B5C313FF /* Build configuration list for PBXNativeTarget "cadcraft-desktop_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9EA1C8FD9CDE3FD6EA757DFE /* debug */,
+				7EDA1926D365854124505369 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		2B476E24193296A15D728488 /* Build configuration list for PBXProject "cadcraft-desktop" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				72EB63C2B91115B9BC4EC08E /* debug */,
+				1A199ADED91D84D3E245C2E7 /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B8CA3EC828D0B406AA2CFEC1 /* Project object */;
+}

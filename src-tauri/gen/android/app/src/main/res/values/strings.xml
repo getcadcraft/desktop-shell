@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">"CadCraft Studio"</string>
+    <string name="main_activity_title">"CadCraft Studio"</string>
+    <string name="webview_old_title">Update Android System WebView</string>
+    <string name="webview_old_body">CadCraft Studio draws its apps with Android System WebView. This tablet has version %1$d; Studio needs %2$d or later. Update it in Google Play, then open Studio again.</string>
+    <string name="webview_old_update">Update</string>
+    <string name="webview_old_later">Not now</string>
+</resources>

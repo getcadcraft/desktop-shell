@@ -1,0 +1,195 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0
+     carry.html — the shell's own page for SD.8 (src-tauri/src/carry.rs): bringing the separate 0.4 apps' data into
+     CadCraft Studio at its first start. Two modes, same origin as the apps:
+       ?read=<slug>  a hidden window on a copy of that app's old profile: reads its localStorage and IndexedDB and hands
+                     them to the shell (cc_carry_put). Blobs, ArrayBuffers, typed arrays, Dates, Maps and Sets survive.
+       (none)        Studio's main window, in Studio's own profile: asks the shell to start the readers, writes what they
+                     hand over without overwriting anything Studio already has, then opens the hub (at most ~60 s).
+     Writing rules: a localStorage key Studio already has keeps Studio's value; an IndexedDB database Studio lacks is made
+     at the old version, one Studio has at a lower version is raised to the old one (never past it, so the apps' own
+     open(name, n) still works); stores Studio's database lacks at a version it already passed are left out (said in
+     the result); a record whose key Studio already has keeps Studio's; `cadcraft-handoff` (hand-overs between apps,
+     10 minutes old at most) is never carried. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CadCraft Studio</title>
+<script src="i18n.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+  main { max-width: 30rem; padding: 2rem; text-align: center; }
+  h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  p { margin: .25rem 0; opacity: .8; }
+</style>
+</head>
+<body>
+<main>
+  <h1 data-t="desktop.carry.title"></h1>
+  <p data-t="desktop.carry.text"></p>
+  <p data-carry-status aria-live="polite"></p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const T = window.__TAURI_INTERNALS__;
+  const invoke = (c, a) => T.invoke(c, a);
+  const SKIP_DBS = new Set(['cadcraft-handoff']);
+  const req = (r) => new Promise((ok, no) => { r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+
+  // --- values: structured data ↔ JSON (keys starting with "$" are reserved for the tags below) ---
+  const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+  const unb64 = (s) => { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+  const TYPED = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array'];
+  async function enc(v) {
+    if (v === undefined) return { $u: 1 };
+    if (v === null || typeof v === 'boolean' || typeof v === 'string') return v;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : { $n: String(v) };
+    if (typeof v === 'bigint') return { $bi: String(v) };
+    if (Array.isArray(v)) { const out = []; for (const x of v) out.push(await enc(x)); return out; }
+    if (v instanceof Date) return { $d: v.getTime() };
+    if (typeof Blob !== 'undefined' && v instanceof Blob) {
+      const o = { $blob: b64(new Uint8Array(await v.arrayBuffer())), type: v.type };
+      if (typeof File !== 'undefined' && v instanceof File) { o.name = v.name; o.lastModified = v.lastModified; }
+      return o;
+    }
+    if (v instanceof ArrayBuffer) return { $ab: b64(new Uint8Array(v)) };
+    if (ArrayBuffer.isView(v)) return { $ta: v.constructor.name, b: b64(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)) };
+    if (v instanceof Map) { const out = []; for (const [k, x] of v) out.push([await enc(k), await enc(x)]); return { $map: out }; }
+    if (v instanceof Set) { const out = []; for (const x of v) out.push(await enc(x)); return { $set: out }; }
+    const o = {};
+    for (const k of Object.keys(v)) o[k.startsWith('$') ? '$' + k : k] = await enc(v[k]);
+    return o;
+  }
+  function dec(v) {
+    if (v === null || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(dec);
+    if ('$u' in v) return undefined;
+    if ('$n' in v) return Number(v.$n);
+    if ('$bi' in v) return BigInt(v.$bi);
+    if ('$d' in v) return new Date(v.$d);
+    if ('$blob' in v) {
+      const bytes = unb64(v.$blob);
+      return 'name' in v && typeof File !== 'undefined' ? new File([bytes], v.name, { type: v.type, lastModified: v.lastModified }) : new Blob([bytes], { type: v.type });
+    }
+    if ('$ab' in v) return unb64(v.$ab).buffer;
+    if ('$ta' in v) { const C = TYPED.includes(v.$ta) ? globalThis[v.$ta] : Uint8Array; const u = unb64(v.b); return v.$ta === 'DataView' ? new DataView(u.buffer) : new C(u.buffer); }
+    if ('$map' in v) return new Map(v.$map.map(([k, x]) => [dec(k), dec(x)]));
+    if ('$set' in v) return new Set(v.$set.map(dec));
+    const o = {};
+    for (const k of Object.keys(v)) o[k.startsWith('$$') ? k.slice(1) : k] = dec(v[k]);
+    return o;
+  }
+
+  const open = (name, version, upgrade) => new Promise((ok, no) => {
+    const r = version === undefined ? indexedDB.open(name) : indexedDB.open(name, version);
+    r.onupgradeneeded = (e) => { if (upgrade) upgrade(r.result, e.oldVersion, r.transaction); };
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => no(r.error);
+    r.onblocked = () => no(new Error('blocked'));
+  });
+
+  // --- reading an old profile (hidden window) ---
+  async function readAll() {
+    const ls = {};
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = localStorage.getItem(k); }
+    const dbs = [];
+    const list = typeof indexedDB.databases === 'function' ? await indexedDB.databases() : [];
+    for (const { name, version } of list) {
+      if (!name || SKIP_DBS.has(name)) continue;
+      const db = await open(name);
+      const out = { name, version: db.version || version, stores: [] };
+      for (const sn of db.objectStoreNames) {
+        const st = db.transaction(sn, 'readonly').objectStore(sn);
+        const meta = { name: sn, keyPath: st.keyPath, autoIncrement: st.autoIncrement,
+          indexes: [...st.indexNames].map((n) => { const x = st.index(n); return { name: n, keyPath: x.keyPath, unique: x.unique, multiEntry: x.multiEntry }; }) };
+        const [keys, vals] = await Promise.all([req(st.getAllKeys()), req(st.getAll())]);
+        meta.records = [];
+        for (let i = 0; i < keys.length; i++) meta.records.push([await enc(keys[i]), await enc(vals[i])]);
+        out.stores.push(meta);
+      }
+      db.close();
+      dbs.push(out);
+    }
+    return { ls, dbs };
+  }
+
+  // --- writing into Studio's profile (main window) ---
+  async function writeAll(data) {
+    const res = { ls: 0, lsKept: 0, dbs: [] };
+    for (const [k, v] of Object.entries(data.ls || {})) {
+      if (localStorage.getItem(k) === null) { localStorage.setItem(k, v); res.ls++; } else res.lsKept++;
+    }
+    const have = new Map((typeof indexedDB.databases === 'function' ? await indexedDB.databases() : []).map((d) => [d.name, d.version]));
+    for (const d of data.dbs || []) {
+      if (SKIP_DBS.has(d.name)) continue;
+      const r = { name: d.name, added: 0, kept: 0, skippedStores: [] };
+      const cur = have.get(d.name);
+      const make = (db, oldVersion, tx) => {
+        for (const s of d.stores) {
+          if (db.objectStoreNames.contains(s.name)) continue;
+          const st = db.createObjectStore(s.name, { keyPath: s.keyPath === null ? undefined : s.keyPath, autoIncrement: s.autoIncrement });
+          for (const ix of s.indexes) st.createIndex(ix.name, ix.keyPath, { unique: ix.unique, multiEntry: ix.multiEntry });
+        }
+      };
+      const db = cur === undefined || cur < d.version ? await open(d.name, d.version, make) : await open(d.name);
+      for (const s of d.stores) {
+        if (!db.objectStoreNames.contains(s.name)) { r.skippedStores.push(s.name); continue; }
+        const st = db.transaction(s.name, 'readwrite').objectStore(s.name);
+        const inline = st.keyPath !== null;
+        for (const [k, v] of s.records) {
+          const key = dec(k);
+          if ((await req(st.count(key))) > 0) { r.kept++; continue; }
+          await req(inline ? st.put(dec(v)) : st.put(dec(v), key));
+          r.added++;
+        }
+      }
+      db.close();
+      res.dbs.push(r);
+    }
+    return res;
+  }
+
+  const q = new URLSearchParams(location.search);
+  const say = (s) => { const n = document.querySelector('[data-carry-status]'); if (n) n.textContent = s; };
+  if (q.has('read')) {
+    const slug = q.get('read');
+    readAll().then((d) => invoke('cc_carry_put', { slug, data: JSON.stringify(d) }))
+      .catch((e) => invoke('cc_carry_put', { slug, data: JSON.stringify({ error: String((e && e.message) || e) }) }));
+    return;
+  }
+
+  // Studio's main window.
+  const arrived = new Set();
+  window.__ccCarry = (slug) => arrived.add(slug);
+  const go = () => location.replace('/index.html');
+  (async () => {
+    let slugs = [];
+    try { slugs = await invoke('cc_carry_plan'); } catch { go(); return; }
+    const until = Date.now() + 60000;
+    for (const slug of slugs) {
+      say(`${slug}…`);
+      let raw = null;
+      while (Date.now() < until) {
+        raw = await invoke('cc_carry_take', { slug });
+        if (raw) break;
+        await new Promise((r) => setTimeout(r, arrived.has(slug) ? 50 : 300));
+      }
+      if (!raw) { await invoke('cc_carry_done', { slug, ok: false, result: { error: 'timeout' } }).catch(() => {}); continue; }
+      try {
+        const d = JSON.parse(raw);
+        if (d.error) throw new Error(d.error);
+        const r = await writeAll(d);
+        await invoke('cc_carry_done', { slug, ok: true, result: r });
+      } catch (e) {
+        await invoke('cc_carry_done', { slug, ok: false, result: { error: String((e && e.message) || e) } }).catch(() => {});
+      }
+    }
+    go();
+  })();
+})();
+</script>
+</body>
+</html>

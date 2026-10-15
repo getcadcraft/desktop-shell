@@ -38,6 +38,8 @@ pub struct Account {
     pub enabled: bool,
     site: String,
     service: String,
+    #[cfg_attr(desktop, allow(dead_code))]
+    app_name: String,
     client_name: String,
     status: Mutex<Status>,
     /// Bumped to stop a running poll (cancel, a new sign-in, sign out).
@@ -68,22 +70,30 @@ fn hostname() -> String {
 }
 
 fn agent() -> ureq::Agent {
+    // Android (TB.1): no system OpenSSL, so rustls, still verified by the system's own certificates (platform verifier).
+    #[cfg(target_os = "android")]
+    let provider = {
+        crate::mobile::tls_ready();
+        ureq::tls::TlsProvider::Rustls
+    };
+    #[cfg(not(target_os = "android"))]
+    let provider = ureq::tls::TlsProvider::NativeTls;
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(Duration::from_secs(60)))
         .user_agent(concat!("CadCraft-desktop/", env!("CARGO_PKG_VERSION")))
         // The operating system's own TLS and trust store (no bundled CA list).
-        .tls_config(
-            ureq::tls::TlsConfig::builder()
-                .provider(ureq::tls::TlsProvider::NativeTls)
-                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-                .build(),
-        )
+        .tls_config(ureq::tls::TlsConfig::builder().provider(provider).root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
         .build()
         .into()
 }
 
 impl Account {
+    /// The site this build talks to (Studio Live checks relay addresses against it).
+    pub fn site(&self) -> &str {
+        &self.site
+    }
+
     /// `service` = the app's identifier (one token per install); `app_name` names the install on /device and in the
     /// account's device list ("CadCraft (DESKTOP-7Q)"; the site adds "on Windows").
     /// Touches no credential store: on a desktop without a Secret Service that would hold the window back ~25 s (D-Bus
@@ -94,22 +104,52 @@ impl Account {
         let client_name = if host.is_empty() { app_name.to_string() } else { format!("{app_name} ({host})") };
         let state = if enabled { "unknown" } else { "off" };
         let status = Status { state: state.into(), ..Default::default() };
-        Account { enabled, site, service: service.to_string(), client_name, status: Mutex::new(status), generation: Mutex::new(0) }
+        Account { enabled, site, service: service.to_string(), app_name: app_name.to_string(), client_name, status: Mutex::new(status), generation: Mutex::new(0) }
     }
 
+    #[cfg(not(target_os = "android"))]
     fn entry(&self) -> Option<keyring::Entry> {
         keyring::Entry::new(&self.service, KEY_USER).ok()
     }
+    #[cfg(not(target_os = "android"))]
     fn token(&self) -> Option<String> {
         self.entry()?.get_password().ok().filter(|t| t.starts_with("ccu_"))
     }
+    #[cfg(not(target_os = "android"))]
     fn store(&self, token: &str) -> Result<(), String> {
         self.entry().ok_or("no credential store")?.set_password(token).map_err(|e| format!("credential store: {e}"))
     }
+    #[cfg(not(target_os = "android"))]
     fn forget(&self) {
         if let Some(e) = self.entry() {
             let _ = e.delete_credential();
         }
+    }
+    // Android (TB.1): `keyring` builds there but has no store; the Keystore holds the key that seals the token (mobile.rs).
+    #[cfg(target_os = "android")]
+    fn token(&self) -> Option<String> {
+        crate::mobile::secret::get(&format!("{}:{KEY_USER}", self.service)).filter(|t| t.starts_with("ccu_"))
+    }
+    #[cfg(target_os = "android")]
+    fn store(&self, token: &str) -> Result<(), String> {
+        crate::mobile::secret::set(&format!("{}:{KEY_USER}", self.service), token).map_err(|e| format!("credential store: {e}"))
+    }
+    #[cfg(target_os = "android")]
+    fn forget(&self) {
+        crate::mobile::secret::delete(&format!("{}:{KEY_USER}", self.service));
+    }
+
+    /// The name this install signs in as ("CadCraft Studio (Pixel Tablet)"). Tablets ask the system for the device's own
+    /// name here, off the main thread, not at start.
+    fn client_name(&self) -> String {
+        #[cfg(mobile)]
+        {
+            let device = crate::mobile::device_name();
+            if !device.is_empty() {
+                return format!("{} ({device})", self.app_name);
+            }
+        }
+        self.client_name.clone()
     }
 
     pub fn status(&self) -> Status {
@@ -158,7 +198,7 @@ pub fn cc_account_sign_in<R: Runtime>(app: AppHandle<R>, acct: State<'_, Account
     let gen = acct.bump();
     let mut resp = agent()
         .post(&format!("{}/api/v1/device/code", acct.site))
-        .send_json(json!({ "client_name": acct.client_name, "platform": platform() }))
+        .send_json(json!({ "client_name": acct.client_name(), "platform": platform() }))
         .map_err(|e| format!("network: {e}"))?;
     let code_status = resp.status().as_u16();
     let body = read_json(&mut resp);
@@ -218,7 +258,7 @@ fn poll<R: Runtime>(app: AppHandle<R>, gen: u64, device_code: String, mut interv
             if let Err(e) = acct.store(token) {
                 // Never fall back to a file or the page's storage: no credential store = not signed in.
                 revoke(&acct.site, token);
-                return fail("error", &format!("This computer's credential store refused the sign-in ({e})."));
+                return fail("keystore", &format!("This computer's credential store refused the sign-in ({e})."));
             }
             let user = me(&acct.site, token).ok();
             return acct.set(&app, Status { state: "signed_in".into(), user, ..Default::default() });
@@ -294,6 +334,7 @@ pub fn cc_account_sign_out<R: Runtime>(app: AppHandle<R>, acct: State<'_, Accoun
     acct.forget();
     let s = Status {
         state: "signed_out".into(),
+        reason: (!revoked).then(|| "offline_signout".to_string()),
         message: (!revoked).then(|| "Signed out on this computer. The website could not be reached: the sign-in is also listed on getcadcraft.com/account/security, where you can remove it.".to_string()),
         ..Default::default()
     };
@@ -301,7 +342,23 @@ pub fn cc_account_sign_out<R: Runtime>(app: AppHandle<R>, acct: State<'_, Accoun
     s
 }
 
-/// The page's only way to the cloud: method + path in headers, body = raw bytes. Only /api/v1/sync/… and /api/v1/me.
+/// Paths a page may reach with the sign-in: the sync API, /api/v1/me and the caller's own picture (SI.7), and Studio Live's
+/// invite links and signed-in names (LV.23, LV.19). All are sync-scope on the site; nothing else (library, account, team,
+/// billing, admin) is reachable from a page, whatever its query string.
+pub fn cloud_path_allowed(path: &str) -> bool {
+    let exact_or_query = |p: &str| path == p || path.strip_prefix(p).is_some_and(|r| r.starts_with('?'));
+    (path.starts_with("/api/v1/sync/")
+        || exact_or_query("/api/v1/me")
+        || exact_or_query("/api/v1/me/avatar")
+        || ["check", "rooms", "end", "assertion"].iter().any(|x| exact_or_query(&format!("/api/v1/live/{x}"))))
+        && !path.contains("..")
+        && !path.contains('#')
+        && !path.contains('\\')
+        && !["%2e", "%2f", "%5c"].iter().any(|x| path.to_ascii_lowercase().contains(x))
+        && path.chars().all(|c| c.is_ascii_graphic())
+}
+
+/// The page's only way to the cloud: method + path in headers, body = raw bytes. Only the paths `cloud_path_allowed` lets by.
 /// Answer (raw): 2 bytes status (big-endian) · 4 bytes length of a JSON header block · that JSON · the body.
 #[tauri::command(async)]
 pub fn cc_cloud_request<R: Runtime>(app: AppHandle<R>, acct: State<'_, Account>, request: Request<'_>) -> Result<Response, String> {
@@ -312,13 +369,7 @@ pub fn cc_cloud_request<R: Runtime>(app: AppHandle<R>, acct: State<'_, Account>,
     let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok()).map(String::from);
     let method = get("x-cc-method").unwrap_or_else(|| "GET".into()).to_uppercase();
     let path = get("x-cc-path").ok_or("missing path")?;
-    let allowed = (path.starts_with("/api/v1/sync/") || path == "/api/v1/me" || path.starts_with("/api/v1/me?"))
-        && !path.contains("..")
-        && !path.contains('#')
-        && !path.contains('\\')
-        && !["%2e", "%2f", "%5c"].iter().any(|x| path.to_ascii_lowercase().contains(x))
-        && path.chars().all(|c| c.is_ascii_graphic());
-    if !allowed {
+    if !cloud_path_allowed(&path) {
         return Err("not_allowed: only the sync API".into());
     }
     let token = acct.token().ok_or("signed_out: sign in to getcadcraft.com first")?;
@@ -328,10 +379,11 @@ pub fn cc_cloud_request<R: Runtime>(app: AppHandle<R>, acct: State<'_, Account>,
     let result = match method.as_str() {
         "GET" => a.get(&url).header("Authorization", &auth).call(),
         "POST" => {
-            let body: Vec<u8> = match request.body() {
-                InvokeBody::Raw(b) => b.clone(),
-                InvokeBody::Json(Value::Null) => Vec::new(),
-                InvokeBody::Json(v) => serde_json::to_vec(v).unwrap_or_default(),
+            // Bytes (raw, or base64 from a tablet's bridge: files.rs body_bytes); other JSON goes as JSON.
+            let body: Vec<u8> = match (crate::files::body_bytes(request.body()), request.body()) {
+                (Some(b), _) => b,
+                (None, InvokeBody::Json(v)) => serde_json::to_vec(v).unwrap_or_default(),
+                (None, _) => Vec::new(),
             };
             let ctype = get("x-cc-content-type").unwrap_or_else(|| "application/octet-stream".into());
             a.post(&url).header("Authorization", &auth).header("Content-Type", &ctype).send(&body[..])
@@ -384,6 +436,18 @@ pub fn cc_account_open_device<R: Runtime>(app: AppHandle<R>, acct: State<'_, Acc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_paths() {
+        for ok in ["/api/v1/me", "/api/v1/me?x=1", "/api/v1/sync/status", "/api/v1/me/avatar", "/api/v1/me/avatar?size=64",
+            "/api/v1/live/check?app=cadcraft", "/api/v1/live/rooms", "/api/v1/live/end", "/api/v1/live/assertion"] {
+            assert!(cloud_path_allowed(ok), "{ok}");
+        }
+        for no in ["/api/v1/men", "/api/v1/me/avatars", "/api/v1/live/relay/host", "/api/v1/live/rooms/../../admin",
+            "/api/v1/library/items", "/api/v1/me/avatar%2f..", "/api/v1/live/keys", "/api/v1/sync/x#y", "/api/v1/me/ x"] {
+            assert!(!cloud_path_allowed(no), "{no}");
+        }
+    }
 
     /// Needs a credential store (Linux: a Secret Service session). `cargo test -- --ignored keyring_round_trip`
     #[test]

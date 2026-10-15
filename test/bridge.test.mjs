@@ -105,6 +105,83 @@ ok(calls.some((c) => c.cmd === 'cc_set_fullscreen' && c.args.on === true), 'full
     'account:false → no account, no cloud (files still there)');
 }
 
+// Studio (suite + live): cadcraftDesktop.live against a stand-in shell — an echo connection through the long poll, sends in
+// order one batch at a time, the close record, and signIn through cloud.request.
+{
+  const lcalls = [];
+  const queue = [];        // records waiting for cc_live_recv
+  let wake = null, inFlight = 0, maxInFlight = 0;
+  const rec = (k, b = new Uint8Array(0)) => { const r = new Uint8Array(5 + b.length); r[0] = k; new DataView(r.buffer).setUint32(1, b.length); r.set(b, 5); return r; };
+  const push = (r) => { queue.push(r); if (wake) { const w = wake; wake = null; w(); } };
+  const linvoke = async (cmd, args, opts) => {
+    lcalls.push({ cmd, args, opts });
+    switch (cmd) {
+      case 'cc_live_open': setTimeout(() => push(rec(0)), 0); return 7;
+      case 'cc_live_recv': {
+        if (!queue.length) await new Promise((r) => { wake = r; });
+        const all = queue.splice(0); const n = all.reduce((a, b) => a + b.length, 0); const u = new Uint8Array(n); let p = 0;
+        for (const r of all) { u.set(r, p); p += r.length; }
+        return u.buffer;
+      }
+      case 'cc_live_send': {
+        inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        const u = new Uint8Array(args); const dv = new DataView(u.buffer);
+        for (let p = 0; p < u.length;) { const n = dv.getUint32(p); push(rec(1, u.slice(p + 4, p + 4 + n))); p += 4 + n; }
+        inFlight--; return null;
+      }
+      case 'cc_live_close': push(rec(2, new TextEncoder().encode(JSON.stringify({ reason: 'closed', code: 0 })))); return null;
+      case 'cc_live_session': return { running: true, port: 5000, addrs: ['192.168.1.20'], app: 'cadcraft' };
+      case 'cc_live_browse': return [{ addr: '192.168.1.20', port: 5000, app: 'cadcraft' }];
+      case 'cc_live_advertise': case 'cc_live_unadvertise': case 'cc_live_relay': case 'cc_live_relay_stop': return null;
+      case 'cc_cloud_request': {
+        const path = opts.headers['x-cc-path'];
+        const json = path === '/api/v1/live/assertion' ? { data: { assertion: 'v1.a.b', picture_sha256: 'ab' } } : null;
+        const body = json ? new TextEncoder().encode(JSON.stringify(json)) : new Uint8Array([82, 73, 70, 70]);
+        const head = new TextEncoder().encode('{}');
+        const out = new Uint8Array(6 + head.length + body.length);
+        new DataView(out.buffer).setUint16(0, 200); new DataView(out.buffer).setUint32(2, head.length);
+        out.set(head, 6); out.set(body, 6 + head.length);
+        return out.buffer;
+      }
+      default: return invoke(cmd, args, opts);
+    }
+  };
+  const mkWin = (flags) => {
+    const w = { __TAURI_INTERNALS__: { invoke: linvoke }, __ccShellFlags: flags };
+    w.top = w;
+    vm.runInContext(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8'),
+      vm.createContext({ window: w, document: { addEventListener() {} }, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder, Math, Number, setTimeout, Promise }));
+    return w.cadcraftDesktop;
+  };
+  console.log('cadcraftDesktop.live (Studio)');
+  ok(!('live' in mkWin({ account: true, suite: true, live: false })) && !('live' in mkWin({ account: true, suite: false, live: true })), 'live only in Studio builds with the live feature');
+  const L = mkWin({ account: true, suite: true, live: true }).live;
+  ok(L && Object.isFrozen(L) && L.encrypts === false && typeof L.transport === 'function', 'live present, frozen, encrypts false');
+  const got = []; let opened = 0, closedWith = null;
+  const t = L.transport('local', { app: 'cadcraft', schema: 1 })({ open: () => opened++, message: (b) => got.push(b[0]), close: (r, c) => { closedWith = [r, c]; } });
+  for (let i = 1; i <= 20; i++) t.send(new Uint8Array([i]));
+  const t0 = Date.now();
+  while (got.length < 20 && Date.now() - t0 < 3000) await new Promise((r) => setTimeout(r, 5));
+  ok(opened === 1 && got.join() === Array.from({ length: 20 }, (_, i) => i + 1).join(), 'open, then 20 messages back in order', got.join());
+  ok(maxInFlight === 1 && lcalls.filter((c) => c.cmd === 'cc_live_send').length < 20, 'one send batch in flight at a time');
+  const op = lcalls.find((c) => c.cmd === 'cc_live_open');
+  ok(op.args.args.kind === 'local' && op.args.args.app === 'cadcraft' && op.args.args.schema === 1, 'open carries kind, app, schema');
+  t.close();
+  ok(lcalls.some((c) => c.cmd === 'cc_live_close' && c.args.id === 7) && closedWith === null, 'close() tells the shell (and no close event back to the page that closed it)');
+  ok((await L.session()).port === 5000 && (await L.browse('K7', 1500))[0].addr === '192.168.1.20', 'session() and browse()');
+  await L.advertise({ room: 'K7QX9M2B' }, { app: 'cadcraft' });
+  const ad = lcalls.filter((c) => c.cmd === 'cc_live_advertise').pop();
+  ok(ad.args.args.room === 'K7QX9M2B' && !ad.args.args.tag && ad.args.args.app === 'cadcraft', 'advertise({room}) passes the room (the shell makes its tag)');
+  await L.browse('K7', 99999);
+  ok(lcalls.filter((c) => c.cmd === 'cc_live_browse').pop().args.args.ms === 5000, 'browse waits at most 5 s');
+  const si = await L.signIn('A'.repeat(43));
+  const cr2 = lcalls.filter((c) => c.cmd === 'cc_cloud_request');
+  ok(si && si.assertion === 'v1.a.b' && si.picture instanceof Uint8Array && si.picture.length === 4, 'signIn → the assertion and the 64 × 64 picture');
+  ok(cr2[0].opts.headers['x-cc-path'] === '/api/v1/live/assertion' && cr2[1].opts.headers['x-cc-path'] === '/api/v1/me/avatar?size=64', 'signIn asks the assertion, then the picture');
+  ok(!('signIn' in mkWin({ account: false, suite: true, live: true }).live), 'a build without sign-in has no signIn');
+}
+
 // host.js on top of the bridge (skipped without the site: set CADCRAFT_SITE, or CADCRAFT_HOST_JS to any copy).
 if (!HOST || !fs.existsSync(HOST)) {
   console.log(`(${HOST ? 'host.js not found at ' + HOST : 'CADCRAFT_SITE / CADCRAFT_HOST_JS not set'}: the host.js checks are skipped)\n\n${pass} passed, ${fail} failed`);

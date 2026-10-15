@@ -1,0 +1,9 @@
+/src/main/**/generated
+/src/main/jniLibs/**/*.so
+/src/main/assets/tauri.conf.json
+/tauri.build.gradle.kts
+/proguard-tauri.pro
+/tauri.properties
+# Staged by build.mjs --target android: the suite and its shell.json (never committed)
+/src/main/assets/app/
+/src/main/assets/shell.json

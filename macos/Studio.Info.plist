@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0
+     CadCraft Studio for macOS: keys merged into the bundle's Info.plist (docs/0.5-PLAN.md LV.13, S.5 as Studio).
+     NOT BUILT YET: needs a Mac (S.5, owner). Studio Live hosts and joins on the local network: macOS 15+ asks the person
+     once (NSLocalNetworkUsageDescription), and Bonjour browsing must name the service (NSBonjourServices). ccstudio://
+     invite links open Studio (CFBundleURLTypes). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>CadCraft Studio finds and joins sessions on your network when you work together live. Nothing is shared until you invite or approve someone.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_ccstudio._tcp</string>
+  </array>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.getcadcraft.studio.join</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>ccstudio</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
