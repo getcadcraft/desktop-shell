@@ -19,6 +19,7 @@
 		D66C194DA357C0F0EDCF875A /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 1B0C83162FCB4038FDADF8CE /* assets */; };
 		EB9D415DA73635C23A5A0931 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AC6D5B46D19E4CA6A2ABE1E9 /* UIKit.framework */; };
 		F00680E8B13D55112EC22658 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12DC0E1FB2032C59FA3CF480 /* CoreGraphics.framework */; };
+		A1C0FFEE0000000000000602 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000601 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +59,7 @@
 		DED973C14FA7AB306BB79C1E /* cadcraft-desktop_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "cadcraft-desktop_iOS.entitlements"; sourceTree = "<group>"; };
 		E56CA10ED09A77B010D5CA0F /* net.rs */ = {isa = PBXFileReference; path = net.rs; sourceTree = "<group>"; };
 		E694D263D9BF3F62C927D154 /* control.rs */ = {isa = PBXFileReference; path = control.rs; sourceTree = "<group>"; };
+		A1C0FFEE0000000000000601 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -144,6 +146,7 @@
 			children = (
 				DED973C14FA7AB306BB79C1E /* cadcraft-desktop_iOS.entitlements */,
 				5173F5452BC6D8C78FC50E55 /* Info.plist */,
+				A1C0FFEE0000000000000601 /* PrivacyInfo.xcprivacy */,
 			);
 			path = "cadcraft-desktop_iOS";
 			sourceTree = "<group>";
@@ -255,6 +258,7 @@
 				9C4DD1250481423F93321739 /* Assets.xcassets in Resources */,
 				0894EE522E256B1AFFB99749 /* LaunchScreen.storyboard in Resources */,
 				D66C194DA357C0F0EDCF875A /* assets in Resources */,
+				A1C0FFEE0000000000000602 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -441,7 +445,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.getcadcraft.studio;
 				PRODUCT_NAME = "CadCraft Studio";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "2";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 				DEVELOPMENT_TEAM = "KXB5X8ZLX7";
 			};
@@ -473,7 +477,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.getcadcraft.studio;
 				PRODUCT_NAME = "CadCraft Studio";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "2";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VALID_ARCHS = arm64;
 				DEVELOPMENT_TEAM = "KXB5X8ZLX7";
 			};

@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<!-- CadCraft Studio on iPad (docs/0.5-PART3.md TB.3, TB.5; STUDIO-LIVE-SPEC § 8, LV.13's iPad keys): merged by Tauri into the
-     app's Info.plist. Studio Live finds and offers sessions on the local network with Bonjour (_ccstudio._tcp); iPadOS asks
-     the person once. Files open in place from the Files app. Studio is an iPad app (no iPhone layout). -->
+<!-- CadCraft Studio on iPad and iPhone (docs/0.5-PART3.md TB.3, TB.5; docs/0.6-PART2.md IPH.1; STUDIO-LIVE-SPEC § 8, LV.13's
+     keys): merged by Tauri into the app's Info.plist. Studio Live finds and offers sessions on the local network with Bonjour
+     (_ccstudio._tcp); the system asks the person once. Files open in place from the Files app. The device family (iPhone +
+     iPad, "1,2") is the Xcode project's TARGETED_DEVICE_FAMILY (gen/apple), never UIDeviceFamily here: Xcode sets that key
+     from the build setting. iPhone: upright and both sideways (no upside-down, as Apple's Face ID iPhones); iPad: all four
+     (needed for Split View / Slide Over, with UIRequiresFullScreen false). A fold phone changes size, not orientation: the
+     web view follows the window and the shell's phone module re-lays the page (assets/js/app-phone.js). -->
 <plist version="1.0">
 <dict>
   <key>NSLocalNetworkUsageDescription</key>
@@ -18,6 +22,12 @@
   <false/>
   <key>UIRequiresFullScreen</key>
   <false/>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
   <key>UISupportedInterfaceOrientations~ipad</key>
   <array>
     <string>UIInterfaceOrientationPortrait</string>

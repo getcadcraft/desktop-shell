@@ -14,7 +14,21 @@
 #   AZURE_SIGNING_PROFILE    the certificate profile
 #   JSIGN_JAR                jsign's jar (7.5 or later)
 # The access token is fetched per call (it lasts about an hour) and passed to jsign only; it is never printed.
+#
+# Dry run (0.6 SIGN; sign-dryrun.mjs): SIGN_DRY_KEYSTORE=<throwaway .p12> (+ SIGN_DRY_PASSWORD) signs with that local test
+# certificate through the same jsign call — only the keystore differs, no Azure, no timestamp — and appends each signed file
+# to SIGN_DRY_LOG. Proves the build calls the signer for every file and the result carries an Authenticode signature.
+# Never publish a dry-run build: its certificate is self-made and trusted by nobody.
 set -euo pipefail
+
+if [ -n "${SIGN_DRY_KEYSTORE:-}" ]; then
+  [ $# -eq 1 ] && [ -f "$1" ] || { echo "usage: sign-azure.sh <file> (dry run)" >&2; exit 2; }
+  [ -n "${JSIGN_JAR:-}" ] || { echo "sign-azure: JSIGN_JAR is not set" >&2; exit 2; }
+  SIGN_DRY_STOREPASS="${SIGN_DRY_PASSWORD:-dry-run}" java -jar "$JSIGN_JAR" --storetype PKCS12 --keystore "$SIGN_DRY_KEYSTORE" \
+    --storepass env:SIGN_DRY_STOREPASS --alias dry-run "$1"
+  [ -z "${SIGN_DRY_LOG:-}" ] || echo "$1" >> "$SIGN_DRY_LOG"
+  exit 0
+fi
 
 need() { [ -n "${!1:-}" ] || { echo "sign-azure: $1 is not set" >&2; exit 2; }; }
 for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET; do need "$v"; done

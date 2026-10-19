@@ -1,0 +1,33 @@
+{
+  "@locale": "id",
+  "@name": "Bahasa Indonesia",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "Masuk ke getcadcraft.com",
+  "desktop.account.signed_out.text": "Dengan masuk, aplikasi ini dapat membuka dan menyimpan gambar cloud Anda. Anda mendapat kode singkat di sini dan menyetujuinya di situs web, di peramban Anda sendiri. Tidak ada rahasia yang diketik atau disalin.",
+  "desktop.account.get_code": "Dapatkan kode",
+  "desktop.account.not_now": "Nanti saja",
+  "desktop.account.waiting.title": "Setujui kode ini di situs web",
+  "desktop.account.waiting.text": "Peramban Anda telah membuka getcadcraft.com/device. Pastikan halaman itu menampilkan kode ini, lalu setujui.",
+  "desktop.account.waiting.own": "Setujui hanya kode yang ditampilkan di sini, di aplikasi Anda sendiri.",
+  "desktop.account.waiting.left": {
+    "=1": "Kode ini masih berlaku 1 menit lagi.",
+    "other": "Kode ini masih berlaku {n} menit lagi."
+  },
+  "desktop.account.waiting.out": "Masa berlaku kode sudah habis.",
+  "desktop.account.open_device": "Buka getcadcraft.com/device",
+  "desktop.account.cancel": "Batal",
+  "desktop.account.signed_in.title": "Sudah masuk",
+  "desktop.account.signed_in.who": "Sudah masuk.",
+  "desktop.account.signed_in.text": "Komputer ini tetap masuk sampai Anda keluar di sini, atau menghapusnya di getcadcraft.com pada Akun, Keamanan.",
+  "desktop.account.sign_out": "Keluar",
+  "desktop.account.done": "Selesai",
+  "desktop.account.only_desktop": "Jendela ini hanya berfungsi di dalam aplikasi desktop CadCraft.",
+  "desktop.reason.throttled": "Terlalu banyak kode dalam waktu singkat. Coba lagi beberapa menit lagi.",
+  "desktop.reason.expired": "Masa berlaku kode habis sebelum disetujui. Minta kode baru.",
+  "desktop.reason.denied": "Proses masuk ditolak di situs web.",
+  "desktop.reason.revoked": "Komputer ini telah dikeluarkan di getcadcraft.com. Masuk lagi untuk memakai gambar cloud Anda; tidak ada yang hilang di komputer ini.",
+  "desktop.reason.offline_signout": "Sudah keluar di komputer ini. Situs web tidak dapat dihubungi: sesi masuk ini masih tercantum di getcadcraft.com/account/security, tempat Anda dapat menghapusnya.",
+  "desktop.reason.keystore": "Penyimpanan kredensial komputer ini menolak proses masuk.",
+  "desktop.carry.title": "Menyiapkan CadCraft Studio",
+  "desktop.carry.text": "Memindahkan pengaturan, file terbaru, dan salinan pemulihan Anda dari aplikasi terpisah yang terpasang sebelumnya."
+}

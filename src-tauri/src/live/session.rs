@@ -98,6 +98,9 @@ enum State {
 pub struct Config {
     pub app: String,
     pub schema: u32,
+    /// The default people limit (guests besides the host) a session starts with. Soft (owner DEC-2-5, 2026-10-17): a
+    /// knock above it still reaches the host, marked `over`, and the host may raise it for the session (`limit`). Only a
+    /// session with nobody to ask (`auto_approve`) refuses above it (`deny full`). 0 = no limit.
     pub max_clients: usize,
     /// How many commits the log keeps for rejoins and same-file joins; older ones mean a snapshot.
     pub log_keep: usize,
@@ -324,6 +327,9 @@ pub struct Session {
     handover: Handover,
     /// Codes carried over from the old host (tags), told to the new host's window when it is in.
     carried: Vec<String>,
+    /// This session's people limit (DEC-2-5): starts at `cfg.max_clients`; the host changes it with `limit` (0 = no
+    /// limit), and it travels with a handoff.
+    people_limit: usize,
     /// The caller's clock at the last frame or tick (codes' time left, for a handoff's state).
     now: Ms,
     pub stats: Stats,
@@ -412,6 +418,7 @@ fn bin(b: &Value) -> Option<&[u8]> {
 
 impl Session {
     pub fn new(cfg: Config) -> Self {
+        let people_limit = cfg.max_clients;
         Session {
             id: rand_hex(8),
             cfg,
@@ -438,6 +445,7 @@ impl Session {
             ended: false,
             handover: Handover::None,
             carried: vec![],
+            people_limit,
             now: 0,
             stats: Stats::default(),
         }
@@ -451,6 +459,14 @@ impl Session {
     }
     pub fn config(&self) -> &Config {
         &self.cfg
+    }
+    /// This session's people limit (0 = none; DEC-2-5).
+    pub fn people_limit(&self) -> usize {
+        self.people_limit
+    }
+    /// `{max, default}`: the session's people limit now and the one it started with (`limit`, and the host's welcome).
+    fn limit_body(&self) -> Value {
+        map(vec![("max", (self.people_limit as u64).into()), ("default", (self.cfg.max_clients as u64).into())])
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -562,6 +578,7 @@ impl Session {
             ("keys", Value::Array(keys)),
             ("props", Value::Array(props)),
             ("invites", Value::Array(invites)),
+            ("people_limit", (self.people_limit as u64).into()),
         ])
     }
 
@@ -582,6 +599,10 @@ impl Session {
             s.saved_hash = get_str(sv, "hash").unwrap_or("").to_string();
         }
         s.locks = get_arr(st, "locks").iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        // The host's choice on the people limit carries on (a state from before 0.6 has none: the default).
+        if let Some(n) = get_u64(st, "people_limit") {
+            s.people_limit = n.min(1_000_000) as usize;
+        }
         for c in get_arr(st, "clients") {
             let id = get_u64(c, "c").ok_or("client id")? as u32;
             let role = get_str(c, "role").and_then(Role::parse).unwrap_or(Role::Editor);
@@ -1108,9 +1129,11 @@ impl Session {
                 return deny(self, out, "role");
             }
         }
-        let people = self.clients.values().filter(|c| c.state != State::Gone && c.role != Role::Replica).count();
-        // max_clients guests besides the host.
-        if people > self.cfg.max_clients {
+        // The people limit is soft (DEC-2-5): guests besides the host, assistants not counted. Above it the knock still
+        // reaches the host, marked `over`, and the host decides; only a session with nobody to ask refuses.
+        let guests = self.clients.values().filter(|c| c.state != State::Gone && c.role != Role::Replica && c.role != Role::Host && c.of == 0).count();
+        let over = of == 0 && self.people_limit > 0 && guests >= self.people_limit;
+        if over && self.cfg.auto_approve {
             return deny(self, out, "full");
         }
         let c = self.new_client(conn, b, if of != 0 { Role::Assistant } else { Role::Editor }, now);
@@ -1140,6 +1163,10 @@ impl Session {
         if cl.of != 0 {
             let pn = self.clients.get(&cl.of).map(|p| p.name.clone()).unwrap_or_default();
             jb.push(("assistant", map(vec![("of", cl.of.into()), ("of_name", pn.into())])));
+        }
+        // Over the people limit: the host sees the cost and chooses (raise the limit, or `deny {reason: full}`).
+        if over {
+            jb.push(("over", map(vec![("limit", (self.people_limit as u64).into()), ("people", ((guests + 1) as u64).into())])));
         }
         let jb = map(jb);
         self.to_role(Role::Host, Envelope::new("join").body(jb), out);
@@ -1303,6 +1330,18 @@ impl Session {
             ("catchup", catchup.into()),
             ("last_n", cl.last_n.into()),
         ]);
+        // The host's window also learns the session's people limit (DEC-2-5), e.g. after a handoff carried a raised one.
+        let b = if cl.role == Role::Host {
+            match b {
+                Value::Map(mut m) => {
+                    m.push(("limit".into(), self.limit_body()));
+                    Value::Map(m)
+                }
+                other => other,
+            }
+        } else {
+            b
+        };
         let mut env = Envelope::new("welcome").body(b);
         env.s = self.id.clone();
         env.q = self.seq;
@@ -1441,6 +1480,12 @@ impl Session {
                     self.broadcast(&Envelope::new("locks").body(b), None, out);
                 }
             }
+            "limit" if role == Role::Host => {
+                // DEC-2-5: the host raises (or puts back) this session's people limit; 0 = no limit. Every host window hears it.
+                self.people_limit = get_u64(&env.b, "max").unwrap_or(self.cfg.max_clients as u64).min(1_000_000) as usize;
+                let b = self.limit_body();
+                self.to_role(Role::Host, Envelope::new("limit").body(b), out);
+            }
             "invite" if role == Role::Host => {
                 let one_time = get(&env.b, "one_time").and_then(|v| v.as_bool()).unwrap_or(false);
                 let ttl = get_u64(&env.b, "ttl").unwrap_or(CODE_TTL).clamp(10_000, 24 * 3_600_000);
@@ -1550,8 +1595,10 @@ impl Session {
                 self.activate(target, out);
             }
             "deny" if state == State::Waiting => {
+                // `reason: full` = the host kept the session at its people limit (DEC-2-5); anything else is "host".
+                let reason = if get_str(&env.b, "reason") == Some("full") { "full" } else { "host" };
                 if let Some(conn) = cl.conn {
-                    out.push(Out::To(conn, Envelope::new("deny").body(map(vec![("reason", "host".into())]))));
+                    out.push(Out::To(conn, Envelope::new("deny").body(map(vec![("reason", reason.into())]))));
                     out.push(Out::Close(conn, "denied".into()));
                     self.conns.remove(&conn);
                 }

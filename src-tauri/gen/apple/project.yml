@@ -66,8 +66,8 @@ targets:
         RUST_LOG: info
     settings:
       base:
-        # iPad only for 0.5 (owner, 2026-10-15); iPhone ("1,2") comes with the next build, for the folding iPhone.
-        TARGETED_DEVICE_FAMILY: "2"
+        # iPhone + iPad (0.6 IPH.1; owner, 2026-10-15: "next build we'll do it because of iphone duo"). 0.5 was iPad only ("2").
+        TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64 

@@ -16,7 +16,8 @@
 //                | android (Studio only, TB.2: a debug APK to try on a tablet or the emulator; with --release an AAB for
 //                Google Play, signed with the owner's upload key from CC_ANDROID_KEYSTORE, CC_ANDROID_KEYSTORE_PASSWORD,
 //                CC_ANDROID_KEY_ALIAS, CC_ANDROID_KEY_PASSWORD — unset = unsigned; needs ANDROID_HOME, the NDK, Java 17)
-//                | ios (Studio only, TB.3: on a Mac with Xcode — see IPAD.md; --sim = the iPad Simulator, no iPad or team needed)
+//                | ios (Studio only, TB.3 + 0.6 IPH.1: iPad and iPhone in one app, on a Mac with Xcode — see IPAD.md;
+//                --sim = a simulator build, no device or team needed; --sim-device "<name>" picks the one the run line boots)
 //   --release    android/ios: the store build (no sign-in until decision 11, shell.json store:true) instead of a test build
 //   --apk        android: the website's APK (owner, 2026-10-15: published on /download for sideloading) — a release APK with
 //                sign-in like the desktop download, signed with CC_ANDROID_KEYSTORE… (refused without it: an APK signed
@@ -75,8 +76,10 @@ const NO_LIVE = flag('--no-live');
 // Tablets (docs/0.5-PART3.md track TB): Studio only.
 const MOBILE = TARGET === 'android' || TARGET === 'ios';
 const RELEASE = flag('--release');
-// ios: --sim builds for the iPad Simulator on the Mac (Apple silicon) instead of a device: no iPad and no signing team needed.
+// ios: --sim builds for the Simulator on the Mac (Apple silicon) instead of a device: no iPad/iPhone and no signing team needed.
+// One build runs on both (TARGETED_DEVICE_FAMILY "1,2"); --sim-device only names the simulator in the printed run line.
 const SIM = flag('--sim');
+const SIM_DEVICE = opt('--sim-device', 'iPad Pro 13-inch (M4)');
 const SIDELOAD = flag('--apk');
 if (SIDELOAD && (TARGET !== 'android' || RELEASE)) { console.error('--apk: --target android, without --release (that is the store AAB)'); process.exit(1); }
 const ABI = opt('--abi', null);
@@ -353,7 +356,7 @@ function hooks(slug, name, exe, apps = []) {
   return L.join('\r\n') + '\r\n';
 }
 
-/** iPad (TB.3, on a Mac with Xcode; IPAD.md): the suite and shell.json as the app bundle's resources (plain files there,
+/** iPad + iPhone (TB.3, 0.6 IPH.1; on a Mac with Xcode; IPAD.md): the suite and shell.json as the app bundle's resources (plain files there,
  *  read by protocol.rs like the desktop's app/ folder), the Xcode project in src-tauri/gen/apple (made once on the Mac by
  *  `cargo tauri ios init`, then committed). Test build: a development-signed build for a device; --release: the App Store
  *  Connect export (TestFlight). Signing: the owner's team (APPLE_DEVELOPMENT_TEAM, or the project's own setting). */
@@ -383,8 +386,9 @@ function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriD
   const appIcon = path.join(tauriDir, 'gen/apple/Assets.xcassets/AppIcon.appiconset');
   if (fs.existsSync(iosIcons) && fs.existsSync(appIcon)) for (const f of fs.readdirSync(iosIcons)) fs.copyFileSync(path.join(iosIcons, f), path.join(appIcon, f));
   if (SIM) {
-    // The iPad Simulator (owner, 2026-10-15: no iPad to test on). A debug build for aarch64-sim; the .app goes to out/ and is
-    // installed with simctl. If this Tauri CLI can't make a simulator build, `cargo tauri ios dev` with the same config runs it.
+    // The Simulator (owner, 2026-10-15: no iPad to test on). A debug build for aarch64-sim; the .app goes to out/ and is
+    // installed with simctl on any iPad or iPhone simulator. If this Tauri CLI can't make a simulator build, `cargo tauri ios
+    // dev` with the same config runs it.
     run('cargo', ['tauri', 'ios', 'build', '--debug', '--target', 'aarch64-sim', '--config', cfgFile, ...featureArgs], { cwd: HERE, env: cargoEnv, allowFail: true });
     const apps = [];
     const walk = (d, depth = 0) => {
@@ -397,13 +401,14 @@ function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriD
     walk(path.join(tauriDir, 'gen/apple/build'));
     const built = apps.filter((a) => /sim/i.test(a)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     if (!built) {
-      console.error(`No simulator .app found. Run it on the simulator directly instead:\n  cargo tauri ios dev --config ${cfgFile} "iPad Pro 13-inch (M4)"\n(list simulators: xcrun simctl list devices available | grep iPad)`);
+      console.error(`No simulator .app found. Run it on the simulator directly instead:\n  cargo tauri ios dev --config ${cfgFile} "${SIM_DEVICE}"\n(list simulators: xcrun simctl list devices available | grep -E 'iPad|iPhone')`);
       throw new Error(`${slug}: no simulator build`);
     }
-    const dest = path.join(HERE, 'out', `${name.replace(/ /g, '-')}-${fileVersion}-ipad-simulator.app`);
+    const dest = path.join(HERE, 'out', `${name.replace(/ /g, '-')}-${fileVersion}-ios-simulator.app`);
     fs.rmSync(dest, { recursive: true, force: true });
     fs.cpSync(built, dest, { recursive: true });
-    console.log(`   → ${path.relative(HERE, dest)}\n   Run it:  open -a Simulator;  xcrun simctl boot "iPad Pro 13-inch (M4)";  xcrun simctl install booted "${dest}";  xcrun simctl launch booted com.getcadcraft.studio`);
+    checkAppleBundle(dest);
+    console.log(`   → ${path.relative(HERE, dest)}\n   Run it:  open -a Simulator;  xcrun simctl boot "${SIM_DEVICE}";  xcrun simctl install booted "${dest}";  xcrun simctl launch booted com.getcadcraft.studio`);
     return;
   }
   run('cargo', ['tauri', 'ios', 'build', ...(RELEASE ? ['--export-method', 'app-store-connect'] : ['--debug']), '--target', 'aarch64',
@@ -411,9 +416,40 @@ function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriD
   const outDir = path.join(tauriDir, 'gen/apple/build/arm64');
   const ipa = fs.existsSync(outDir) ? fs.readdirSync(outDir).filter((f) => f.endsWith('.ipa')).map((f) => path.join(outDir, f))[0] : null;
   if (!ipa) throw new Error(`${slug}: no .ipa under ${outDir}`);
-  const dest = path.join(HERE, 'out', `${name.replace(/ /g, '-')}-${fileVersion}${RELEASE ? '' : '-ipad-test'}.ipa`);
+  const dest = path.join(HERE, 'out', `${name.replace(/ /g, '-')}-${fileVersion}${RELEASE ? '' : '-ios-test'}.ipa`);
   fs.copyFileSync(ipa, dest);
+  checkAppleBundle(dest);
   console.log(`   → ${path.relative(HERE, dest)} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
+}
+
+/** IPH.1: what Xcode actually wrote into the app (Mac only: plutil). iPhone + iPad, the orientations, the local network keys and
+ *  the privacy manifest must all be in the built bundle; a project that drifted (a re-run `cargo tauri ios init`, an Xcode edit)
+ *  fails here instead of in App Store review. An .ipa is a zip with Payload/<app>.app inside. */
+function checkAppleBundle(appOrIpa) {
+  let app = appOrIpa, tmp = null;
+  if (appOrIpa.endsWith('.ipa')) {
+    tmp = fs.mkdtempSync(path.join(HERE, 'stage', 'ipa-check-'));
+    run('unzip', ['-q', appOrIpa, '-d', tmp]);
+    const pay = path.join(tmp, 'Payload');
+    app = path.join(pay, fs.readdirSync(pay).find((f) => f.endsWith('.app')));
+  }
+  try {
+    const r = spawnSync('plutil', ['-convert', 'json', '-o', '-', path.join(app, 'Info.plist')], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`plutil could not read ${app}/Info.plist`);
+    const info = JSON.parse(r.stdout);
+    const bad = [];
+    const fam = (info.UIDeviceFamily || []).map(Number).sort().join(',');
+    if (fam !== '1,2') bad.push(`UIDeviceFamily is [${fam}], want iPhone + iPad [1,2]`);
+    const phone = info.UISupportedInterfaceOrientations || [];
+    for (const o of ['UIInterfaceOrientationPortrait', 'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight']) if (!phone.includes(o)) bad.push(`iPhone orientations lack ${o}`);
+    if ((info['UISupportedInterfaceOrientations~ipad'] || []).length !== 4) bad.push('iPad needs all four orientations (Split View)');
+    if (!info.NSLocalNetworkUsageDescription || !(info.NSBonjourServices || []).includes('_ccstudio._tcp')) bad.push('local network keys missing (Studio Live)');
+    if (!fs.existsSync(path.join(app, 'PrivacyInfo.xcprivacy'))) bad.push('PrivacyInfo.xcprivacy is not in the bundle');
+    if (bad.length) throw new Error(`the built app is not what the project says:\n  - ${bad.join('\n  - ')}`);
+    console.log(`   ✓ bundle: iPhone + iPad, orientations, local network keys, privacy manifest`);
+  } finally {
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 /** The Android SDK, its NDK and Java 17 for `cargo tauri android build`. */
@@ -688,6 +724,26 @@ for (const slug of slugs) {
     const dest = path.join(HERE, 'out', `${name}-${fileVersion}${STORE ? '-store' : ''}.dmg`);
     fs.copyFileSync(dmg, dest);
     console.log(`   → ${path.relative(HERE, dest)} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
+    // 0.6 SIGN: what the signature holds, checked with Apple's own tools. Ad hoc (no APPLE_SIGNING_IDENTITY) = a test build.
+    const appDir = path.join(tauriDir, 'target/universal-apple-darwin/release/bundle/macos', `${name}.app`);
+    const sh = (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8' });
+    const cs = sh('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appDir]);
+    if (cs.status !== 0) throw new Error(`codesign --verify failed: ${(cs.stderr || '').trim().split('\n').pop()}`);
+    if (process.env.APPLE_SIGNING_IDENTITY && !STORE) {
+      const info = sh('codesign', ['-dvv', appDir]).stderr || '';
+      const team = info.match(/TeamIdentifier=(\S+)/)?.[1];
+      if (!/Authority=Developer ID Application/.test(info)) throw new Error('signed, but not with a Developer ID Application certificate');
+      if (process.env.APPLE_TEAM_ID && team !== process.env.APPLE_TEAM_ID) throw new Error(`signed by team ${team}, want ${process.env.APPLE_TEAM_ID}`);
+      if (!/flags=.*runtime/.test(info)) throw new Error('no hardened runtime: notarization refuses it');
+      const notarize = (process.env.APPLE_API_KEY && process.env.APPLE_API_ISSUER) || (process.env.APPLE_ID && process.env.APPLE_PASSWORD && process.env.APPLE_TEAM_ID);
+      if (notarize) {
+        const st = sh('xcrun', ['stapler', 'validate', appDir]);
+        if (st.status !== 0) throw new Error('not notarized/stapled (xcrun stapler validate): Gatekeeper would refuse it on another Mac');
+        const gk = sh('spctl', ['--assess', '--type', 'execute', '--verbose=2', appDir]);
+        if (gk.status !== 0 || !/Notarized Developer ID/.test(gk.stderr || '')) throw new Error(`Gatekeeper: ${(gk.stderr || '').trim()}`);
+        console.log(`   ✓ signed (Developer ID, team ${team}, hardened runtime), notarized and stapled; Gatekeeper accepts it`);
+      } else console.warn('   !! signed with a Developer ID but NOT notarized (APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH, or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID): never publish it');
+    } else if (!process.env.APPLE_SIGNING_IDENTITY) console.warn('   !! ad hoc signature (a test build): Gatekeeper asks on first open; never publish it');
   } else {
     run('cargo', ['tauri', 'build', '--no-bundle', '--config', cfgFile, ...featureArgs], { cwd: tauriDir, env: cargoEnv });
   }

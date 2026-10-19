@@ -32,7 +32,7 @@ desktop-shell/
   licenses.mjs          the shell's crate license gate + THIRD_PARTY.md (build.mjs runs it first)
   bridge/bridge.js      window.cadcraftDesktop, injected before the page (host.js's desktop half)
   bridge/*.html         the shell's own pages (.shell/account.html sign-in, .shell/carry.html), words via shell-i18n.js
-  lang/                 the shell's own words: en.json + es-MX.json (draft), keys desktop.*
+  lang/                 the shell's own words: en.json + es-MX.json and id.json (drafts), keys desktop.*
   macos/                Studio's Info.plist keys + Mac App Store entitlements (not built yet: S.5/S.6 need a Mac)
   webview2.mjs          is the WebView2 runtime current? (build.mjs refuses an old one; RUNTIME.md = the routine)
   SIGNING.md            code signing (W.6): what the owner provides, how builds sign

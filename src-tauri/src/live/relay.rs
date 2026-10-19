@@ -170,6 +170,9 @@ async fn once(h: &LiveHandle, url: &str, ticket: &str, stop: &mut watch::Receive
                                 ("state", "ready".into()),
                                 ("room", field("room").unwrap_or_default().into()),
                                 ("license_ok", (field("license_ok").as_deref() == Some("true")).into()),
+                                // The relay's own joiner cap for this room (0 = none): the host window says when people
+                                // over it can't come through the link (DEC-2-5).
+                                ("max_clients", field("max_clients").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).into()),
                             ]),
                             Some("license") => notice(h, vec![("state", "license".into()), ("ok", (field("ok").as_deref() == Some("true")).into())]),
                             Some("closed") => notice(h, vec![("state", "closing".into()), ("reason", field("reason").unwrap_or_default().into())]),

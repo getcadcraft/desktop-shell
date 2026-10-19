@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- CadCraft Studio's privacy manifest (0.6 IPH.1 / IPAD; App Store Connect refuses an upload whose binary uses a
+     "required reason" API without one). What the app touches, and why:
+     - File timestamps: the documents a person picks in the Files app (their modification date, shown in Recent files and
+       used to notice a change on disk: 3B52.1), and the app's own files in its container (grants list, recovery copies:
+       C617.1). Swift URL.resourceValues(.contentModificationDateKey); Rust std::fs::metadata (stat).
+     - System boot time: Rust's std::time::Instant (mach_absolute_time) measures time between events inside the app
+       (timeouts, Live's keep-alive): 35F9.1.
+     No tracking, no tracking domains. Nothing is collected by the store build (no sign-in until decision 11); keep
+     NSPrivacyCollectedDataTypes in step with the App Store privacy answers in stores/listings/studio/privacy.json. -->
+<plist version="1.0">
+<dict>
+  <key>NSPrivacyTracking</key>
+  <false/>
+  <key>NSPrivacyTrackingDomains</key>
+  <array/>
+  <key>NSPrivacyCollectedDataTypes</key>
+  <array/>
+  <key>NSPrivacyAccessedAPITypes</key>
+  <array>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>3B52.1</string>
+        <string>C617.1</string>
+      </array>
+    </dict>
+    <dict>
+      <key>NSPrivacyAccessedAPIType</key>
+      <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+      <key>NSPrivacyAccessedAPITypeReasons</key>
+      <array>
+        <string>35F9.1</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
