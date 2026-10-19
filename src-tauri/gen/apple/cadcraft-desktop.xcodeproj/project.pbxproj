@@ -445,7 +445,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.getcadcraft.studio;
 				PRODUCT_NAME = "CadCraft Studio";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "2";
 				VALID_ARCHS = arm64;
 				DEVELOPMENT_TEAM = "KXB5X8ZLX7";
 			};
@@ -477,7 +477,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.getcadcraft.studio;
 				PRODUCT_NAME = "CadCraft Studio";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "2";
 				VALID_ARCHS = arm64;
 				DEVELOPMENT_TEAM = "KXB5X8ZLX7";
 			};

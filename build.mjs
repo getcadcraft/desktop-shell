@@ -439,14 +439,14 @@ function checkAppleBundle(appOrIpa) {
     const info = JSON.parse(r.stdout);
     const bad = [];
     const fam = (info.UIDeviceFamily || []).map(Number).sort().join(',');
-    if (fam !== '1,2') bad.push(`UIDeviceFamily is [${fam}], want iPhone + iPad [1,2]`);
+    if (fam !== '2') bad.push(`UIDeviceFamily is [${fam}], want iPad only [2]`);
     const phone = info.UISupportedInterfaceOrientations || [];
     for (const o of ['UIInterfaceOrientationPortrait', 'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight']) if (!phone.includes(o)) bad.push(`iPhone orientations lack ${o}`);
     if ((info['UISupportedInterfaceOrientations~ipad'] || []).length !== 4) bad.push('iPad needs all four orientations (Split View)');
     if (!info.NSLocalNetworkUsageDescription || !(info.NSBonjourServices || []).includes('_ccstudio._tcp')) bad.push('local network keys missing (Studio Live)');
     if (!fs.existsSync(path.join(app, 'PrivacyInfo.xcprivacy'))) bad.push('PrivacyInfo.xcprivacy is not in the bundle');
     if (bad.length) throw new Error(`the built app is not what the project says:\n  - ${bad.join('\n  - ')}`);
-    console.log(`   ✓ bundle: iPhone + iPad, orientations, local network keys, privacy manifest`);
+    console.log(`   ✓ bundle: iPad only, orientations, local network keys, privacy manifest`);
   } finally {
     if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
   }

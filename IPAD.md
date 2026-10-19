@@ -1,7 +1,6 @@
-# CadCraft Studio on iPad and iPhone — the routine (on a Mac)
+# CadCraft Studio on iPad — the routine (on a Mac)
 
-Track TB in getcadcraft.com's `docs/0.5-PART3.md` (TB.3); iPhone since 0.6 (`docs/0.6-PART2.md` IPH.1: one app for both,
-`TARGETED_DEVICE_FAMILY "1,2"`). Studio is the iPad and iPhone app: one install, the eight apps inside, the
+Track TB in getcadcraft.com's `docs/0.5-PART3.md` (TB.3); **iPad only (owner, 2026-10-19: "build towards iPad")**: `TARGETED_DEVICE_FAMILY "2"` in `gen/apple` (project.yml + pbxproj) and build.mjs's bundle check wants `[2]`. iPhone was prepared as one app for both (0.6 IPH.1, `"1,2"`) and stays a later step: flip those three places back and do the iPhone run sheet. Minimum iPadOS 15.0. Studio is the iPad and iPhone app: one install, the eight apps inside, the
 same shell as the desktop and Android (Tauri 2). **Everything here was prepared on Linux and has not been built yet**: the
 first run on the Mac is the real check. Android builds on the CadCraft server (`build.mjs --target android`, see README).
 
