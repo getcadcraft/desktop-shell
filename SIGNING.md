@@ -1,14 +1,100 @@
-# Code signing on every platform (W.6; 0.6 SIGN)
+# Code signing on every platform (W.6; 0.6 SIGN; 0.7 SIGN)
 
-| Platform | Signed with | Script | State (2026-10-16) | Dry run |
+| Platform | Signed with | Script | State (2026-10-22) | Dry run |
 |---|---|---|---|---|
 | Windows | Azure Artifact Signing (DDG), jsign | `build.mjs` → `CC_SIGN_COMMAND='sign-azure.sh %1'` | sign-in works (`--check`); the signing service still refuses the profile (403): Microsoft's identity validation is not finished | `node sign-dryrun.mjs windows --edition <suite>` |
 | macOS | Developer ID Application (DDG team KXB5X8ZLX7) + notarization | `build.mjs --target macos` with `APPLE_*` (Tauri) | waits on the owner's certificate | on the Mac, below |
 | iPad / iPhone | Apple Distribution, automatic signing (DDG team) | `build.mjs --target ios [--release]` | waits on the owner's App Store record | on the Mac, below |
 | Android | our release key (`secrets/android`, 2026-10-15) | `build.mjs --target android --release` / `--apk` | **signing now** (the published APK) | `node sign-dryrun.mjs android` |
 | Linux | an OpenPGP key over `SHA256SUMS` | `stores/linux/sign-sums.sh <folder>` | waits on the owner's release key | `node sign-dryrun.mjs linux [folder]` |
+| Microsoft Store (MSIX) | **the Store signs it** (Microsoft's certificate); only the package identity is ours | `build.mjs studio --store --msix` (packed here by `msix/pack.mjs`, or `makeappx` on Windows) | packs here; WACK needs the Windows SDK; the name reservation is the owner's | `node test/msix.test.mjs` |
+| Website MSIX | the Azure certificate (`CC_MSIX_SIGN_COMMAND`); publish refuses anything else | `build.mjs studio --msix` | built, not published: waits on Azure | `getcadcraft.com bin/test-update-feed.php` |
+| Updates (every platform) | the owner's minisign key (Tauri updater) | `build.mjs` / `stores/linux/build.mjs` with `secrets/updater/credentials.env`, `updater-feed.mjs`, the site's `UpdateFeed` | **key made 2026-10-24** (`secrets/updater/`); the owner backs it up offline | `node test/feed.test.mjs`, `getcadcraft.com bin/test-update-feed.php` |
+
+**`node sign-preflight.mjs`** says, per platform, which of these values are missing from the environment a build would see
+(names only, never values). Run it before a release build; it exits 1 while anything is missing.
 
 `node sign-dryrun.mjs verify <file.exe>` says who signed a Windows file (from its Authenticode table) — for the real build too.
+
+## Updates: the key, the one endpoint, the entries (0.7: D7.54, SIGN, MSIX; owner 2026-10-24)
+
+**The key exists** (made 2026-10-24 with `cargo tauri signer generate`, tauri-cli 2.12.2, password-protected, key id
+`E0AB66CFCD391317`). Where it lives:
+
+| What | Where | Who reads it |
+|---|---|---|
+| private key | `/var/www/CADCRAFT/secrets/updater/cadcraft-updater.key` (root, 600; dir 700) | builds, through `TAURI_SIGNING_PRIVATE_KEY` |
+| its password | `secrets/updater/credentials.env` `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (600) | the same |
+| public key | `secrets/updater/credentials.env` `CC_UPDATE_PUBKEY`, `desktop-shell/updater-key.pub` (public; in this repo), and the site's `.env` `CC_UPDATE_PUBKEY` | builds (into `shell.json`), the site (checks every entry when it publishes) |
+
+Never print, copy or commit the private key or the password. **Back both up offline** (the owner): losing either means no
+installed copy can ever be updated in place again. A build picks the key up the way the Android credentials are picked up:
+
+```
+set -a; . /var/www/CADCRAFT/secrets/updater/credentials.env; set +a     # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), CC_UPDATE_PUBKEY
+node build.mjs studio --edition <suite> --webview2-fixed <runtime> --portable          # website .exe + portable zip
+cd ../stores && node linux/build.mjs studio --edition <suite>                          # .deb + AppImage
+```
+
+**One endpoint for every edition** (owner 2026-10-24). Every build with the key gets in `shell.json`
+`updates {endpoint, pubkey, auto, edition}`, endpoint
+`https://getcadcraft.com/api/v1/updates/{{target}}/{{arch}}/{{current_version}}?app=studio&edition={edition}` (Tauri fills
+`{{…}}`, the shell fills `{edition}`; `CC_UPDATE_ENDPOINT` overrides it, https only — http only in an `--update-test` build).
+The site's `UpdateFeed` service answers **204** (nothing newer for this copy) or Tauri's `{version, notes, pub_date, url,
+signature}`, from published files only, after the update rules (`getcadcraft.com/public_html/core/data/update-rules.json`:
+hold a version back, cap at a version, a stepping stone, off for a range, rollout off — the site CLAUDE.md § Updates).
+
+| Edition (`shell.json`) | Build | What "Check for updates" does |
+|---|---|---|
+| `installer` | `build.mjs` (NSIS, fixed WebView2 runtime) | Tauri updater: download, check the signature, run the new installer, restart |
+| `portable` | `build.mjs --portable` | asks the endpoint and **only tells** ("download it", opens /download): a running portable copy can't safely swap its own program, runtime and app folder |
+| `deb`, `appimage` | `stores/linux/build.mjs` (one `shell.json`, edition `linux`: the shell sends `appimage` when it runs as one) | Tauri updater (AppImage replaced; `.deb` through `pkexec dpkg -i`) |
+| `dmg` | `build.mjs --target macos` | entries are recorded, but /download does not publish the `.app.tar.gz` yet: the Mac gets 204 until it does |
+| `msix-web` | `build.mjs --msix` (website package) | App Installer: `Package.CheckUpdateAvailabilityAsync`, then `PackageManager.AddPackageByAppInstallerFileAsync` (src-tauri/src/package.rs) — the `.appinstaller` comes from the same service |
+| `msix-store` | `build.mjs --store --msix` | the Store: `StoreContext` (`GetAppAndOptionalStorePackageUpdatesAsync` → `RequestDownloadAndInstallStorePackageUpdatesAsync`); the endpoint always answers 204 |
+
+The Tauri updater never runs inside a package (package identity → Windows' route; a package installed from a file answers
+`not_store`). **The fixed-runtime installer carries the updater since 0.7:** the old rule ("Tauri forces the download
+bootstrapper") was true only of the v1 updater (`createUpdaterArtifacts: "v1Compatible"` rebuilds the installer with
+`DownloadBootstrapper`); the v2 artifacts (`createUpdaterArtifacts: true`) sign the very installer that was built, fixed
+runtime and all (tauri-bundler 2.10 `bundle.rs` / `updater_bundle.rs`).
+
+**Entries, not a latest.json.** Each build signs every updatable file (Tauri for the installer; `tauri signer sign` for the
+portable zip and, after `fixDeb`, the `.deb`) and writes one entry per file: `out/updates/studio-<x.y.z>/<edition>-<target>-<arch>.json`
+{version, edition, target, arch, file (its /download name), sha256, signature} (`updater-feed.mjs add`). `Downloads::publish()`
+reads the entries of the version it publishes (desktop-shell/out and stores/out/linux), keeps the ones whose file it published
+with the same SHA-256, **checks each signature against `CC_UPDATE_PUBKEY`** (minisign, in PHP: `UpdateFeed::verifySignature`)
+and writes `downloads/<x.y>/updates.json`; a bad entry refuses the whole set. Gate before publishing:
+
+```
+node updater-feed.mjs check studio 0.7.0 --out out,../stores/out/linux      # installer, portable, deb, appimage each have an entry
+```
+
+**Automatic checks are on by default and run once a day** (decision 10, owner 2026-10-24): at most one automatic check per 24 h
+while Studio runs, timed from the last check in the app data folder's `updates.json` (a start a day later checks ~30 s in; a Studio
+left running checks again when a day has passed). The person's own choice (off) always wins; `CC_UPDATE_AUTO=0` builds with them off.
+The website MSIX does the same through App Installer's own check; the Store package follows the Store. Nothing installs without
+the person saying yes.
+Settings › Updates in Studio shows the version and edition, where updates come from, the last check (kept in the app data
+folder's `updates.json`), the latest version for this edition with its notes and Install, and the automatic-checks switch.
+
+**Test builds** (`build.mjs --update-test`, `CC_UPDATE_ENDPOINT=http://127.0.0.1:<port>/…`): their own name ("CadCraft Studio
+Update Test") and identifier (`com.getcadcraft.studio.updatetest`), no install hooks, the plugin's insecure-transport switch
+on, outputs in `out/update-test/` (never where Downloads looks). The test server is the site's real service on a fixture set:
+`getcadcraft.com/tools/update-feed-test/{router,publish}.php`. Never publish a test build.
+
+### The website MSIX (built, not published)
+
+`build.mjs studio --edition <suite> --msix` (no `--webview2-fixed`: a package uses the system's WebView2) → the website
+package `out/CadCraft Studio-<v>.msix` + `out/CadCraft Studio-<v>.appinstaller`, packed on Linux by `msix/pack.mjs`. Identity:
+`MSIX_WEB_PUBLISHER` = the Azure certificate's subject **exactly** (Windows refuses a package whose Publisher is not its
+signer's subject), `MSIX_WEB_IDENTITY_NAME` (default `CadCraft.Studio`). Signed by `CC_MSIX_SIGN_COMMAND` (`%1` = the file),
+e.g. jsign with Azure Artifact Signing once the profile works:
+`CC_MSIX_SIGN_COMMAND='java -jar /opt/jsign/current/jsign-7.5.jar --storetype TRUSTEDSIGNING --keystore eus.codesigning.azure.net --storepass <token> --alias cadcraft-signing/cadcraft-public --tsaurl http://timestamp.acs.microsoft.com --tsmode RFC3161 %1'`.
+**Never publish an unsigned or self-signed package:** `Downloads::publish()` holds the MSIX back unless its signature is
+real (`UpdateFeed::msixInfo`: signer = the manifest's Publisher, not self-signed, code signing, a chain to a certificate in the
+PEM bundle `.env MSIX_TRUST_BUNDLE` — the owner saves the Azure chain's root there once). People install through
+`/api/v1/updates/studio.appinstaller`, which App Installer re-reads to update.
 
 ## Windows
 

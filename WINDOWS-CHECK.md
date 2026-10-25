@@ -99,3 +99,43 @@ installing Studio:
   Model theme is set, the recent files list has the sample and it reopens, and "Recover your work?" offers the unsaved line.
   `%APPDATA%\com.getcadcraft.studio\carried.json` lists cadcraft and bimcraft as done. Start Studio again: straight to the hub.
 - W16. Silent: `CadCraft-Studio-<v>-setup.exe /S` with CadCraft 0.4 installed and closed removes it without asking.
+
+## MSIX (the Microsoft Store package; 0.7)
+
+On a clean Windows 10 (2004 or later) and a Windows 11, with the sideloaded test package from `msix/PACK.md` (a throwaway
+certificate whose subject equals the manifest's Publisher, trusted once) — and again with the Store's own copy once it is live:
+
+- M1. `Add-AppxPackage` installs without a UAC prompt (MSIX is per user). Settings › Apps lists "CadCraft Studio" with its version.
+- M2. Start has **nine** entries: Studio and one tile per app (CadCraft, BimCraft, …), each with its own icon; each tile opens Studio
+  straight into that app (`--app=<slug>`), and with Studio already open, into the running Studio.
+- M3. The hub draws (the system's WebView2 is used: no `webview2\` folder in the package); PartCraft's status bar does not say
+  single-threaded.
+- M4. Files: double-click a `.dwg`, `.ifc`, `.ccsheets`: Windows asks which program the first time (a package never takes a default
+  silently); "Always" → Studio opens it in the right app. `.pdf` is only under Open with.
+- M5. `ccstudio://join/AB3K7MNP#abcdefghijklmnopqrstuv` in the browser's address bar: it offers to open CadCraft Studio and Studio
+  comes forward.
+- M6. Studio Live: host from an app; Windows Defender Firewall › Inbound rules lists the package's rules (private networks only);
+  a second computer on the LAN joins without any prompt on the host.
+- M7. Settings and recovery copies live in the package's private AppData: `%LOCALAPPDATA%\Packages\<package family name>\LocalCache`
+  (not `%LOCALAPPDATA%\com.getcadcraft.studio`). Save a file in your Documents; uninstall from Settings › Apps: the package, its
+  settings and its recovery copies are gone, **your saved file is still there**.
+- M8. Settings › Updates: "Updates come from: Microsoft Store" (a Store install) or "getcadcraft.com, through Windows App
+  Installer" (installed from the website's `.appinstaller`); a package installed from a bare `.msix` says it has no update source
+  (`not_store`), and Check for updates says why instead of failing. Automatic checks are Windows' own for a package.
+- M9. The Windows App Certification Kit report (`appcert.exe test …`): paste its failures, if any.
+- M10. Updates (0.7): the website package — install from its `.appinstaller`, publish a newer version, Studio › Settings › Updates ›
+  Check for updates → "Update available" → Install now: Studio closes, Windows updates the package and starts it again on the new
+  version (Settings › Updates shows it). The Store package — the Store test in `docs/0.7-sessions/platforms-runsheets.md` (a private
+  flight with two versions). Proven on workstation11a 2026-10-25 for the website route with a test certificate (install, hold-back,
+  update + restart in 6 s, once-a-day check, sideloaded / Store path `not_store`): site `docs/results/0.7/2026-10-24-msix-updates.md`.
+
+## Updates in the installer and the portable zip (0.7)
+
+- U1. Studio › Settings › Updates shows the version, "Windows installer" (or "Portable"), "Updates come from: getcadcraft.com", Last
+  checked and Latest version available ("You are on the latest version." when nothing is newer).
+- U2. (Proven on workstation11a 2026-10-24 with test builds, as were U3 and U4.) With a newer release published: Check for updates → "Update available" → Install now → the new installer runs (the fixed
+  WebView2 runtime comes with it), Studio starts again on the new version. "Not now" installs nothing and Settings keeps the
+  version on offer with an Install button.
+- U3. A package that doesn't match CadCraft's signature installs nothing: "The update didn't match CadCraft's signature…".
+- U4. The portable zip: Check for updates tells about a newer zip and offers the download page; it never replaces its own folder.
+- U5. With the network off: "Couldn't reach the update server…".

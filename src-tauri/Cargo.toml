@@ -97,7 +97,9 @@ panic = "abort"
 rfd = { version = "0.16", default-features = false, features = ["common-controls-v6"] }
 # DR.5: hear a pop-up page's window.close() (WebView2 WindowCloseRequested) and destroy its native window (same version as wry's).
 webview2-com = "0.39"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+# 0.7 MSIX (src/package.rs): package identity, App Installer and Store updates, restart after an update.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "ApplicationModel", "Foundation",
+            "Management_Deployment", "Services_Store", "Win32_Storage_Packaging_Appx", "Win32_System_Recovery", "Win32_UI_Shell"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.16", default-features = false, features = ["gtk3"] }

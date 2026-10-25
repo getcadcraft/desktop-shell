@@ -1,0 +1,33 @@
+{
+  "@locale": "vi",
+  "@name": "Tiếng Việt",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "Đăng nhập vào getcadcraft.com",
+  "desktop.account.signed_out.text": "Đăng nhập cho phép ứng dụng này mở và lưu các bản vẽ trên đám mây của bạn. Bạn nhận một mã ngắn tại đây và phê duyệt trên trang web, trong trình duyệt của riêng bạn. Không có gì bí mật được gõ hay sao chép.",
+  "desktop.account.get_code": "Lấy mã",
+  "desktop.account.not_now": "Để sau",
+  "desktop.account.waiting.title": "Phê duyệt mã này trên trang web",
+  "desktop.account.waiting.text": "Trình duyệt của bạn đã mở getcadcraft.com/device. Kiểm tra xem trang có hiện mã này không, rồi phê duyệt.",
+  "desktop.account.waiting.own": "Chỉ phê duyệt mã hiện ở đây, trong ứng dụng của bạn.",
+  "desktop.account.waiting.left": {
+    "=1": "Mã còn dùng được thêm 1 phút.",
+    "other": "Mã còn dùng được thêm {n} phút."
+  },
+  "desktop.account.waiting.out": "Mã đã hết hạn.",
+  "desktop.account.open_device": "Mở getcadcraft.com/device",
+  "desktop.account.cancel": "Hủy",
+  "desktop.account.signed_in.title": "Đã đăng nhập",
+  "desktop.account.signed_in.who": "Đã đăng nhập.",
+  "desktop.account.signed_in.text": "Máy tính này vẫn đăng nhập cho đến khi bạn đăng xuất tại đây, hoặc gỡ nó trên getcadcraft.com trong mục Tài khoản, Bảo mật.",
+  "desktop.account.sign_out": "Đăng xuất",
+  "desktop.account.done": "Xong",
+  "desktop.account.only_desktop": "Cửa sổ này chỉ hoạt động trong ứng dụng máy tính CadCraft.",
+  "desktop.reason.throttled": "Quá nhiều mã trong thời gian ngắn. Thử lại sau vài phút.",
+  "desktop.reason.expired": "Mã đã hết hạn trước khi được phê duyệt. Hãy xin mã mới.",
+  "desktop.reason.denied": "Việc đăng nhập đã bị từ chối trên trang web.",
+  "desktop.reason.revoked": "Máy tính này đã bị đăng xuất trên getcadcraft.com. Đăng nhập lại để dùng các bản vẽ trên đám mây; không có gì trên máy tính này bị mất.",
+  "desktop.reason.offline_signout": "Đã đăng xuất trên máy tính này. Không kết nối được tới trang web: việc đăng nhập cũng được liệt kê tại getcadcraft.com/account/security, nơi bạn có thể gỡ nó.",
+  "desktop.reason.keystore": "Kho thông tin xác thực của máy tính này đã từ chối việc đăng nhập.",
+  "desktop.carry.title": "Đang thiết lập CadCraft Studio",
+  "desktop.carry.text": "Đang chuyển cài đặt, tệp gần đây và bản khôi phục từ các ứng dụng riêng đã cài trước đây."
+}

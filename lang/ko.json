@@ -1,0 +1,33 @@
+{
+  "@locale": "ko",
+  "@name": "한국어",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "getcadcraft.com 로그인",
+  "desktop.account.signed_out.text": "로그인하면 이 앱에서 클라우드 도면을 열고 저장할 수 있습니다. 여기에 표시되는 짧은 코드를 받아 웹사이트에서 직접 사용하는 브라우저로 승인합니다. 비밀 정보를 입력하거나 복사하지 않습니다.",
+  "desktop.account.get_code": "코드 받기",
+  "desktop.account.not_now": "나중에",
+  "desktop.account.waiting.title": "웹사이트에서 이 코드를 승인하십시오",
+  "desktop.account.waiting.text": "브라우저에서 getcadcraft.com/device가 열렸습니다. 이 코드가 표시되는지 확인한 후 승인하십시오.",
+  "desktop.account.waiting.own": "이 앱에 표시된 코드만 승인하십시오.",
+  "desktop.account.waiting.left": {
+    "=1": "코드는 1분 더 유효합니다.",
+    "other": "코드는 {n}분 더 유효합니다."
+  },
+  "desktop.account.waiting.out": "코드가 만료되었습니다.",
+  "desktop.account.open_device": "getcadcraft.com/device 열기",
+  "desktop.account.cancel": "취소",
+  "desktop.account.signed_in.title": "로그인됨",
+  "desktop.account.signed_in.who": "로그인되었습니다.",
+  "desktop.account.signed_in.text": "이 컴퓨터는 여기서 로그아웃하거나 getcadcraft.com의 계정, 보안에서 제거할 때까지 로그인 상태로 유지됩니다.",
+  "desktop.account.sign_out": "로그아웃",
+  "desktop.account.done": "완료",
+  "desktop.account.only_desktop": "이 창은 CadCraft 데스크톱 앱 안에서만 작동합니다.",
+  "desktop.reason.throttled": "짧은 시간에 코드를 너무 많이 요청했습니다. 몇 분 후에 다시 시도하십시오.",
+  "desktop.reason.expired": "승인하기 전에 코드가 만료되었습니다. 새 코드를 요청하십시오.",
+  "desktop.reason.denied": "웹사이트에서 로그인이 거부되었습니다.",
+  "desktop.reason.revoked": "이 컴퓨터는 getcadcraft.com에서 로그아웃되었습니다. 클라우드 도면을 사용하려면 다시 로그인하십시오. 이 컴퓨터의 데이터는 손실되지 않았습니다.",
+  "desktop.reason.offline_signout": "이 컴퓨터에서 로그아웃했습니다. 웹사이트에 연결할 수 없었으므로 이 로그인은 getcadcraft.com/account/security에도 남아 있으며, 거기서 제거할 수 있습니다.",
+  "desktop.reason.keystore": "이 컴퓨터의 자격 증명 저장소가 로그인을 거부했습니다.",
+  "desktop.carry.title": "CadCraft Studio 설정 중",
+  "desktop.carry.text": "이전에 설치한 개별 앱의 설정, 최근 파일, 복구 사본을 가져오는 중입니다."
+}

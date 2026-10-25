@@ -29,9 +29,22 @@
 //   --webview2-fixed <dir>   carry Microsoft's WebView2 Fixed Version runtime in the install (Windows, cross-built only):
 //                <dir> = the extracted cab (Microsoft.WebView2.FixedVersionRuntime.<v>.x64). The installer never asks for
 //                WebView2 and the app never uses the system's; ~250 MB more per app, and the runtime does NOT update
-//                itself — rebuild with a newer runtime for Chromium security fixes. Not with the updater (Tauri then
-//                forces the download bootstrapper). Refused when the runtime is older than the newest Edge Stable
+//                itself — rebuild with a newer runtime for Chromium security fixes; the updater (below) brings that new
+//                installer to installed copies (0.7: Tauri's v2 updater artifacts keep the fixed runtime — only the old
+//                v1 updater forced the download bootstrapper). Refused when the runtime is older than the newest Edge Stable
 //                release of its major (webview2.mjs, SD.2); the routine for a Chromium security release is in RUNTIME.md.
+//   --portable   (0.7 D7.53) also the portable Windows zip: the program, app/, shell.json with "portable": true, the fixed
+//                WebView2 runtime, the notices; unpack anywhere and run. Its data (settings, recovery copies, recent files,
+//                window places) stays in data/ beside the program. With a feed it only TELLS about a newer version (edition
+//                portable: "download it"), never replaces itself. Needs --webview2-fixed, not --store.
+//                → out/<Name>-<version>-portable.zip
+//   --msix       (0.7) Studio as an MSIX too: with --store the Microsoft Store package (Partner Center's identity MSIX_*, the
+//                Store signs it, updates from the Store); without, the website's package (identity MSIX_WEB_*, signed by us with
+//                CC_MSIX_SIGN_COMMAND — the Azure certificate; never published unsigned or self-signed — updates through its
+//                .appinstaller). Packed here with msix/pack.mjs → out/<Name>-<version>[-store].msix (+ .appinstaller for web).
+//   --update-test   a TEST build for the updater on a test machine: CC_UPDATE_ENDPOINT may be http://127.0.0.1:<port>/… (the
+//                plugin's insecure-transport switch is set in this build only), shell.json updates.test, outputs in
+//                out/update-test/ (never where Downloads looks). Never publish one.
 //   --webview2-unchecked   build even when Microsoft's release list can't be reached (offline); never publish that build
 //   --version x.y.z   installer version + file name instead of the release's (e.g. 0.4.1 = the 0.4 apps, new installer)
 //   --no-live    leave Studio Live out of the shell (cargo --no-default-features), e.g. for 0.4.1
@@ -40,16 +53,25 @@
 // On Linux: NSIS only, cross-compiled with cargo-xwin. On Windows (CI, .github/workflows/windows.yml): NSIS + MSI (WiX).
 // Signing (W.6): set CC_SIGN_COMMAND to a command Tauri runs per file, %1 = the file (e.g. Azure Trusted Signing:
 //   trusted-signing-cli -e <endpoint> -a <account> -c <profile> -d CadCraft %1). Unset = unsigned (SmartScreen warns).
-// Updates (W.7, off unless all are set): CC_UPDATE_PUBKEY (the owner's updater public key) turns the feed on in
-// shell.json — https://github.com/getcadcraft/<slug>/releases/latest/download/latest.json, or CC_UPDATE_ENDPOINT
-// ({slug} is replaced); CC_UPDATE_AUTO=1 makes automatic checks the default (decision 10). TAURI_SIGNING_PRIVATE_KEY
-// (+ _PASSWORD; CI secret only) signs the installer for the updater and writes out/<slug>-latest.json.
+// Updates (W.7; 0.7 one endpoint), off unless CC_UPDATE_PUBKEY is set (the owner's updater public key; the key pair lives in
+// /var/www/CADCRAFT/secrets/updater/, `set -a; . secrets/updater/credentials.env; set +a` — SIGNING.md § Updates): shell.json
+// gets updates {endpoint, pubkey, auto, edition}. The endpoint is getcadcraft.com's one update service,
+// https://getcadcraft.com/api/v1/updates/{{target}}/{{arch}}/{{current_version}}?edition={edition}, or CC_UPDATE_ENDPOINT
+// ({slug} replaced here, {edition} by the shell at run time, {{…}} by Tauri). Automatic checks are on by default, once a day (decision 10, owner
+// 2026-10-24; CC_UPDATE_AUTO=0 starts them off). TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD) signs each updatable file and records its entry
+// (updater-feed.mjs → out/updates/<slug>-<version>/), which the site publishes with the file (Downloads::publish). CC_UPDATE_NOTES
+// = the release notes Studio shows beside the version on offer (else the site's default line).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { checkRuntime, fetchFeed, runtimeVersion } from './webview2.mjs';
+import { addEntry as feedEntry } from './updater-feed.mjs';
+import { pack as msixPack, unpackCheck as msixUnpackCheck } from './msix/pack.mjs';
+import { appInstaller as msixAppInstaller } from './msix/appinstaller.mjs';
+import { buildFolder as portableFolder, checkFolder as portableCheck } from './portable/layout.mjs';
+import { buildLayout as msixLayout, checkLayout as msixCheck, identityFrom as msixIdentity } from './msix/layout.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 // The site's folder, only needed to pack an edition (no --edition). No default: the site is not part of this repo.
@@ -68,7 +90,17 @@ const EDITION = opt('--edition', null);
 const TARGET = opt('--target', 'windows');
 const ALLOW_GATE = flag('--allow-gate');
 const STORE = flag('--store');
+// --msix (0.7): after the Windows store build, also the folder MakeAppx packs into Studio's .msix (msix/PACK.md). Needs --store.
+const MSIX = flag('--msix');
 const WV2_FIXED = opt('--webview2-fixed', null);
+if (MSIX && WV2_FIXED) { console.error('--msix: without --webview2-fixed (a package uses the system\'s WebView2); build the installer separately'); process.exit(1); }
+const UPDATE_TEST = flag('--update-test');
+if (UPDATE_TEST && (STORE || !process.env.CC_UPDATE_PUBKEY)) { console.error('--update-test: not with --store, and with CC_UPDATE_PUBKEY (a test feed needs the key)'); process.exit(1); }
+if (!UPDATE_TEST && /^http:/.test(process.env.CC_UPDATE_ENDPOINT || '')) { console.error('CC_UPDATE_ENDPOINT is http: only an --update-test build may use one'); process.exit(1); }
+// Where the files land: out/, or out/update-test/ for a test build (Downloads::sources never looks there).
+const OUT = UPDATE_TEST ? path.join(HERE, 'out', 'update-test') : path.join(HERE, 'out');
+const PORTABLE = flag('--portable');
+if (PORTABLE && (!WV2_FIXED || STORE || MSIX || TARGET !== 'windows')) { console.error('--portable: Windows, with --webview2-fixed (the zip carries the runtime), not with --store / --msix'); process.exit(1); }
 const WV2_UNCHECKED = flag('--webview2-unchecked');
 const VERSION = opt('--version', null);
 // --no-live: build the shell without Studio Live (cargo --no-default-features): 0.4.x point releases.
@@ -91,7 +123,6 @@ if (WV2_FIXED) {
   // On Windows the Tauri CLI adds the runtime folder to the resources itself, from a path relative to src-tauri; here we
   // add it (Linux cross-build, where the CLI does not). Wiring the Windows path is left until CI needs it.
   if (process.platform === 'win32' || TARGET !== 'windows') { console.error('--webview2-fixed: Windows installers cross-built on Linux only'); process.exit(1); }
-  if (process.env.TAURI_SIGNING_PRIVATE_KEY) { console.error('--webview2-fixed: not with the updater (Tauri forces the download bootstrapper)'); process.exit(1); }
   // SD.2: never ship a runtime older than the newest of its major (webview2.mjs). The folder must be named as Microsoft's
   // cab is (…FixedVersionRuntime.<v>.x64), so the version is known. No network → refuse, unless --webview2-unchecked.
   const wv = runtimeVersion(WV2_FIXED);
@@ -155,6 +186,8 @@ const PYTHON = process.env.PYTHON || 'python3';
     process.exit(1);
   }
 }
+/** The one update endpoint (0.7, owner 2026-10-24): {slug} here, {edition} by the shell, {{target}} {{arch}} {{current_version}} by Tauri. */
+const updateEndpoint = (slug) => (process.env.CC_UPDATE_ENDPOINT || 'https://getcadcraft.com/api/v1/updates/{{target}}/{{arch}}/{{current_version}}?app={slug}&edition={edition}').replaceAll('{slug}', slug);
 const cargoEnv = { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}`, XWIN_ACCEPT_LICENSE: '1' };
 
 /** The browser edition for one app: packed by the site's own packer (and its license/secrets gate). */
@@ -360,6 +393,35 @@ function hooks(slug, name, exe, apps = []) {
  *  read by protocol.rs like the desktop's app/ folder), the Xcode project in src-tauri/gen/apple (made once on the Mac by
  *  `cargo tauri ios init`, then committed). Test build: a development-signed build for a device; --release: the App Store
  *  Connect export (TestFlight). Signing: the owner's team (APPLE_DEVELOPMENT_TEAM, or the project's own setting). */
+/** D7.53: the portable zip next to the installer (portable/layout.mjs): the folder, its check, then `zip`. */
+function portableZip({ slug, name, exe, fileVersion, version, release, stage, exePath, updates }) {
+  const out = OUT;
+  const dir = portableFolder({ out, name, version: fileVersion, exe, updates, from: { exePath, stage, wv2: path.resolve(WV2_FIXED), shellDir: HERE } });
+  const problems = portableCheck(dir, { exe });
+  if (problems.length) throw new Error(`the portable folder is wrong:\n  - ${problems.join('\n  - ')}`);
+  const zip = path.join(out, `${name}-${fileVersion}-portable.zip`);
+  fs.rmSync(zip, { force: true });
+  run('zip', ['-qr', '-X', zip, path.basename(dir)], { cwd: path.dirname(dir) });
+  fs.rmSync(path.dirname(dir), { recursive: true, force: true });
+  console.log(`   → ${path.relative(HERE, zip)} (${(fs.statSync(zip).size / 1048576).toFixed(1)} MB, portable)`);
+  // Its update entry: the portable copy never installs it, but the endpoint answers with the file and its signature like any
+  // other edition (the signature also lets anyone check the zip with the public key).
+  if (updates && process.env.TAURI_SIGNING_PRIVATE_KEY) {
+    signFile(zip);
+    const r = feedEntry({ out, slug, version, edition: 'portable', target: 'windows', arch: 'x86_64', published: path.basename(zip).replace(/ /g, '-'), file: zip, sig: zip + '.sig', notes: process.env.CC_UPDATE_NOTES || undefined });
+    console.log(`   → ${path.relative(HERE, r.file)} (update entry: portable)`);
+  }
+}
+
+/** Sign a file for the updater with the owner's key (`tauri signer sign` → <file>.sig). The CLI's sign command wants the key's
+ *  text, not its path, in TAURI_SIGNING_PRIVATE_KEY; the path form (credentials.env) is read here. */
+function signFile(file) {
+  const k = process.env.TAURI_SIGNING_PRIVATE_KEY;
+  const key = fs.existsSync(k) ? fs.readFileSync(k, 'utf8').trim() : k;
+  run('cargo', ['tauri', 'signer', 'sign', file], { cwd: path.join(HERE, 'src-tauri'), env: { ...cargoEnv, TAURI_SIGNING_PRIVATE_KEY: key }, stdio: ['ignore', 'ignore', 'inherit'] });
+  if (!fs.existsSync(file + '.sig')) throw new Error(`no signature written for ${file}`);
+}
+
 function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriDir }) {
   if (!fs.existsSync(path.join(tauriDir, 'gen/apple'))) throw new Error('no src-tauri/gen/apple: run `cargo tauri ios init` once on the Mac and commit it (IPAD.md)');
   fs.mkdirSync(stage, { recursive: true });
@@ -404,7 +466,7 @@ function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriD
       console.error(`No simulator .app found. Run it on the simulator directly instead:\n  cargo tauri ios dev --config ${cfgFile} "${SIM_DEVICE}"\n(list simulators: xcrun simctl list devices available | grep -E 'iPad|iPhone')`);
       throw new Error(`${slug}: no simulator build`);
     }
-    const dest = path.join(HERE, 'out', `${name.replace(/ /g, '-')}-${fileVersion}-ios-simulator.app`);
+    const dest = path.join(OUT, `${name.replace(/ /g, '-')}-${fileVersion}-ios-simulator.app`);
     fs.rmSync(dest, { recursive: true, force: true });
     fs.cpSync(built, dest, { recursive: true });
     checkAppleBundle(dest);
@@ -416,7 +478,7 @@ function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriD
   const outDir = path.join(tauriDir, 'gen/apple/build/arm64');
   const ipa = fs.existsSync(outDir) ? fs.readdirSync(outDir).filter((f) => f.endsWith('.ipa')).map((f) => path.join(outDir, f))[0] : null;
   if (!ipa) throw new Error(`${slug}: no .ipa under ${outDir}`);
-  const dest = path.join(HERE, 'out', `${name.replace(/ /g, '-')}-${fileVersion}${RELEASE ? '' : '-ios-test'}.ipa`);
+  const dest = path.join(OUT, `${name.replace(/ /g, '-')}-${fileVersion}${RELEASE ? '' : '-ios-test'}.ipa`);
   fs.copyFileSync(ipa, dest);
   checkAppleBundle(dest);
   console.log(`   → ${path.relative(HERE, dest)} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
@@ -539,7 +601,7 @@ function buildMobile({ slug, ed, rel, name, release, version, fileVersion, stage
   if (!fs.existsSync(built)) throw new Error(`${slug}: nothing at ${built}`);
   const base = `${name.replace(/ /g, '-')}-${fileVersion}`;
   const file = RELEASE ? `${base}${signed ? '' : '-unsigned'}.aab` : SIDELOAD ? `${base}.apk` : `${base}-android-test.apk`;
-  const dest = path.join(HERE, 'out', file);
+  const dest = path.join(OUT, file);
   fs.copyFileSync(built, dest);
   console.log(`   → ${path.relative(HERE, dest)} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)${RELEASE && !signed ? ' — unsigned: Google Play needs the owner\'s upload key (CC_ANDROID_KEYSTORE…)' : ''}`);
 }
@@ -553,14 +615,16 @@ if (MOBILE) fs.mkdirSync(path.dirname(THIRD_PARTY), { recursive: true });
 run('node', [path.join(HERE, 'licenses.mjs'), '--target', triple, '--out', THIRD_PARTY, ...(NO_LIVE ? ['--no-default-features'] : [])]);
 
 const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-fs.mkdirSync(path.join(HERE, 'out'), { recursive: true });
+fs.mkdirSync(OUT, { recursive: true });
 
 const failed = [];
 for (const slug of slugs) {
   try {
   const ed = edition(slug);
   const rel = JSON.parse(fs.readFileSync(path.join(ed, 'release.json'), 'utf8'));
-  const name = rel.name;
+  // A test build has its own name and identifier (its own install folder, data folder and uninstall entry), so it never
+  // upgrades, takes over or uninstalls a real Studio on the test machine.
+  const name = UPDATE_TEST ? `${rel.name} Update Test` : rel.name;
   const release = String(rel.release);
   const version = VERSION || semver(release);
   const fileVersion = VERSION || release; // the name on the installer: CadCraft-0.4-setup.exe, CadCraft-0.4.1-setup.exe
@@ -587,10 +651,12 @@ for (const slug of slugs) {
   const isolate = manifests.map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).isolate).find(Boolean);
   const headers = isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {};
   const updates = !STORE && process.env.CC_UPDATE_PUBKEY ? {
-    endpoint: (process.env.CC_UPDATE_ENDPOINT || 'https://github.com/getcadcraft/{slug}/releases/latest/download/latest.json').replaceAll('{slug}', slug),
+    endpoint: updateEndpoint(slug),
     pubkey: process.env.CC_UPDATE_PUBKEY,
-    auto: process.env.CC_UPDATE_AUTO === '1',
-  } : undefined;
+    auto: process.env.CC_UPDATE_AUTO !== '0',   // decision 10, owner 2026-10-24: on, once a day; CC_UPDATE_AUTO=0 starts it off
+    edition: TARGET === 'macos' ? 'dmg' : 'installer',
+    ...(UPDATE_TEST ? { test: true } : {}),
+  } : STORE && MSIX ? { edition: 'msix-store' } : undefined;
   const account = STORE ? false : undefined;
   fs.writeFileSync(path.join(stage, 'shell.json'), JSON.stringify({ app: slug, name, version: release, headers, updates, account, suite: suite || undefined, store: STORE || undefined }, null, 2));
   run(PYTHON, [path.join(HERE, 'make-icon.py'), slug, path.join(stage, 'icon.png')]);
@@ -622,7 +688,7 @@ for (const slug of slugs) {
     productName: name,
     mainBinaryName: exe,
     version,
-    identifier: `com.getcadcraft.${slug}`,
+    identifier: `com.getcadcraft.${slug}${UPDATE_TEST ? '.updatetest' : ''}`,
     bundle: {
       ...(process.env.TAURI_SIGNING_PRIVATE_KEY ? { createUpdaterArtifacts: true } : {}),
       shortDescription: name,
@@ -640,7 +706,8 @@ for (const slug of slugs) {
       },
       windows: {
         ...(WV2_FIXED ? { webviewInstallMode: { type: 'fixedRuntime', path: `${WV2_DIR}/` } } : {}),
-        nsis: { installMode: 'currentUser', installerHooks: rel2(path.join(stage, 'hooks.nsh')) },
+        // A test build carries no install hooks: no file types claimed, no 0.4 apps removed, no Start menu tiles per app.
+        nsis: { installMode: 'currentUser', ...(UPDATE_TEST ? {} : { installerHooks: rel2(path.join(stage, 'hooks.nsh')) }) },
         ...(process.env.CC_SIGN_COMMAND ? { signCommand: process.env.CC_SIGN_COMMAND } : {}),
       },
     },
@@ -648,8 +715,10 @@ for (const slug of slugs) {
   // Signing for the updater needs the public key in the bundler's config too (the shell itself reads shell.json).
   if (process.env.TAURI_SIGNING_PRIVATE_KEY && !STORE) {
     if (!updates) throw new Error('TAURI_SIGNING_PRIVATE_KEY without CC_UPDATE_PUBKEY: set both, or neither');
-    config.plugins = { updater: { pubkey: updates.pubkey, endpoints: [updates.endpoint] } };
+    config.plugins = { updater: { pubkey: updates.pubkey, endpoints: [] } };
   }
+  // A test build's http feed on the test machine (the plugin refuses http otherwise). Only --update-test sets this.
+  if (UPDATE_TEST) config.plugins = { ...(config.plugins || {}), updater: { ...((config.plugins || {}).updater || { pubkey: updates.pubkey, endpoints: [] }), dangerousInsecureTransportProtocol: true } };
   if (TARGET === 'macos') {
     // macOS registers file types through the bundle's Info.plist (Tauri's fileAssociations; Windows keeps its own polite
     // NSIS hook): own types Owner, polite ones Default (used only when nothing else claims them), the rest Alternate.
@@ -696,23 +765,74 @@ for (const slug of slugs) {
       if (!msi) throw new Error(`${slug}: no MSI under ${base}`);
       outs.push([msi, `${name}-${fileVersion}${tagOut}.msi`]);
     }
-    for (const [from, to] of outs) {
-      const dest = path.join(HERE, 'out', to);
+    // An --msix run builds the program for the package; its NSIS installer (no fixed runtime) is a by-product and is not put
+    // in out/, so it can never be mistaken for the website's installer (that one carries the runtime).
+    if (!MSIX) for (const [from, to] of outs) {
+      const dest = path.join(OUT, to);
       fs.copyFileSync(from, dest);
       console.log(`   → ${path.relative(HERE, dest)} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
     }
-    // The updater feed entry (W.7): only with the signing key, for the NSIS installer as published on the release.
-    if (!STORE && process.env.TAURI_SIGNING_PRIVATE_KEY && fs.existsSync(exeOut + '.sig')) {
-      const tag = `${slug}-v${version}`;
-      const feed = {
-        version, notes: `${name} ${release}`, pub_date: new Date().toISOString(),
-        platforms: { 'windows-x86_64': {
-          signature: fs.readFileSync(exeOut + '.sig', 'utf8').trim(),
-          url: `https://github.com/getcadcraft/${slug}/releases/download/${tag}/${encodeURIComponent(`${name}-${release}-setup.exe`)}`,
-        } },
+    if (PORTABLE) {
+      if (slug !== 'studio') throw new Error('--portable is Studio only');
+      portableZip({ slug, name, exe, fileVersion, version, release, stage, exePath: path.join(base, '..', `${exe}.exe`), updates });
+    }
+    if (MSIX) {
+      if (slug !== 'studio') throw new Error('--msix is Studio only');
+      const iconDir = path.join(stage, 'msix-icons');
+      fs.mkdirSync(iconDir, { recursive: true });
+      const iconFor = (s) => {
+        if (!s) return path.join(stage, 'icon.png');
+        const f = path.join(iconDir, `${s}.png`);
+        if (!fs.existsSync(f)) run(PYTHON, [path.join(HERE, 'make-icon.py'), s, f]);
+        return f;
       };
-      fs.writeFileSync(path.join(HERE, 'out', `${slug}-latest.json`), JSON.stringify(feed, null, 2));
-      console.log(`   → out/${slug}-latest.json (upload as latest.json on the ${tag} release)`);
+      const T = APPS._types, f = APPS.studio.files;
+      const fileTypes = [...f.own, ...f.polite, ...f.openWith].map((ext) => ({ ext, label: T[ext] || `${ext.toUpperCase()} file` }));
+      const kind = STORE ? 'store' : 'web';
+      const identity = msixIdentity(process.env, kind);
+      // The website package: the installer's shell.json with sign-in, edition msix-web (App Installer updates it; no endpoint
+      // or key needed in the package — Windows has the source). The Store package keeps the store build's shell.json.
+      const shell = kind === 'web' ? { ...JSON.parse(fs.readFileSync(path.join(stage, 'shell.json'), 'utf8')), updates: { edition: 'msix-web', auto: process.env.CC_UPDATE_AUTO !== '0', ...(UPDATE_TEST ? { test: true } : {}) } } : null;
+      const layout = msixLayout({
+        out: OUT, name, version, exe: `${exe}.exe`, kind, shell,
+        exePath: path.join(base, '..', `${exe}.exe`), stage, apps: suiteApps, fileTypes, shellDir: HERE, iconFor, identity,
+      });
+      const problems = msixCheck(layout, kind);
+      if (problems.length) throw new Error(`the MSIX layout is wrong:\n  - ${problems.join('\n  - ')}`);
+      console.log(`   → ${path.relative(HERE, layout)} (MSIX layout, ${kind})`);
+      if (!identity.reserved) console.warn(kind === 'store'
+        ? '   !! no MSIX_IDENTITY_NAME / MSIX_PUBLISHER / MSIX_PUBLISHER_DISPLAY: the identity is a stand-in. Partner Center rejects it; reserve the name first.'
+        : '   !! no MSIX_WEB_PUBLISHER (the signing certificate\'s subject): the identity is a stand-in; never publish this package.');
+      // Pack (msix/pack.mjs, the Linux route; makeappx on Windows does the same) and, for the website, sign + .appinstaller.
+      const msixFile = path.join(OUT, `${name}-${fileVersion}${kind === 'store' ? '-store' : ''}.msix`);
+      const pk = msixPack(layout, msixFile);
+      const bad = msixUnpackCheck(msixFile);
+      if (bad.length) throw new Error(`the packed MSIX does not read back:\n  - ${bad.join('\n  - ')}`);
+      console.log(`   → ${path.relative(HERE, msixFile)} (${pk.files} files, ${(pk.bytes / 1048576).toFixed(1)} MB, ${kind === 'store' ? 'unsigned: the Store signs it' : 'unsigned so far'})`);
+      if (kind === 'web') {
+        if (process.env.CC_MSIX_SIGN_COMMAND) {
+          const [cmd, ...args] = process.env.CC_MSIX_SIGN_COMMAND.split(' ').map((a) => (a === '%1' ? msixFile : a));
+          run(cmd, args);
+          console.log('   ✓ signed with CC_MSIX_SIGN_COMMAND (the site publishes it only with a real, non-self-signed certificate)');
+        } else console.warn('   !! the website MSIX is NOT signed (CC_MSIX_SIGN_COMMAND): Windows refuses to install it, and the site refuses to publish it');
+        const pub = path.basename(msixFile).replace(/ /g, '-');
+        const base = (process.env.CC_MSIX_BASE_URL || `https://getcadcraft.com/downloads/${fileVersion}`).replace(/\/$/, '');
+        const ai = msixAppInstaller({
+          uri: process.env.CC_APPINSTALLER_URL || 'https://getcadcraft.com/api/v1/updates/studio.appinstaller',
+          packageUri: `${base}/${encodeURIComponent(pub)}`, identityName: identity.identityName, publisher: identity.publisher, version,
+          hours: process.env.CC_APPINSTALLER_HOURS ? Number(process.env.CC_APPINSTALLER_HOURS) : undefined,
+        });
+        const aiFile = msixFile.replace(/\.msix$/, '.appinstaller');
+        fs.writeFileSync(aiFile, ai);
+        console.log(`   → ${path.relative(HERE, aiFile)} (the site serves the live one from its update service)`);
+      }
+    }
+    // The update entry (W.7; 0.7 one endpoint): only with the signing key, for the NSIS installer as /download publishes it.
+    if (!STORE && !MSIX && process.env.TAURI_SIGNING_PRIVATE_KEY && fs.existsSync(exeOut + '.sig')) {
+      const pub = `${name}-${fileVersion}-setup.exe`.replace(/ /g, '-');
+      const r = feedEntry({ out: OUT, slug, version, edition: 'installer', target: 'windows', arch: 'x86_64', published: pub, file: exeOut, sig: exeOut + '.sig', notes: process.env.CC_UPDATE_NOTES || undefined });
+      fs.copyFileSync(exeOut + '.sig', path.join(OUT, `${name}-${fileVersion}-setup.exe.sig`));
+      console.log(`   → ${path.relative(HERE, r.file)} (update entry: installer)`);
     }
   } else if (TARGET === 'macos') {
     // Universal (Apple silicon + Intel). Signing/notarizing: Tauri reads APPLE_CERTIFICATE (+ _PASSWORD), APPLE_SIGNING_IDENTITY,
@@ -721,9 +841,18 @@ for (const slug of slugs) {
     const dir = path.join(tauriDir, 'target/universal-apple-darwin/release/bundle/dmg');
     const dmg = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.dmg')).map((f) => path.join(dir, f))[0] : null;
     if (!dmg) throw new Error(`${slug}: no .dmg under ${dir}`);
-    const dest = path.join(HERE, 'out', `${name}-${fileVersion}${STORE ? '-store' : ''}.dmg`);
+    const dest = path.join(OUT, `${name}-${fileVersion}${STORE ? '-store' : ''}.dmg`);
     fs.copyFileSync(dmg, dest);
     console.log(`   → ${path.relative(HERE, dest)} (${(fs.statSync(dest).size / 1048576).toFixed(1)} MB)`);
+    // The updater's package (0.7 D7.54): the .app as a tarball + its signature, one universal file under both Mac names.
+    const tgz = path.join(tauriDir, 'target/universal-apple-darwin/release/bundle/macos', `${name}.app.tar.gz`);
+    if (!STORE && process.env.TAURI_SIGNING_PRIVATE_KEY && fs.existsSync(tgz) && fs.existsSync(tgz + '.sig')) {
+      const asset = `${name}-${release}-mac.app.tar.gz`;
+      fs.copyFileSync(tgz, path.join(OUT, asset));
+      fs.copyFileSync(tgz + '.sig', path.join(OUT, asset + '.sig'));
+      for (const arch of ['aarch64', 'x86_64']) feedEntry({ out: OUT, slug, version, edition: 'dmg', target: 'darwin', arch, published: asset.replace(/ /g, '-'), file: tgz, sig: tgz + '.sig', notes: process.env.CC_UPDATE_NOTES || undefined });
+      console.log(`   → out/${asset} + its update entries (dmg; the site does not publish the tarball yet: the Mac gets 204 until it does)`);
+    }
     // 0.6 SIGN: what the signature holds, checked with Apple's own tools. Ad hoc (no APPLE_SIGNING_IDENTITY) = a test build.
     const appDir = path.join(tauriDir, 'target/universal-apple-darwin/release/bundle/macos', `${name}.app`);
     const sh = (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8' });
@@ -753,8 +882,8 @@ for (const slug of slugs) {
   }
 }
 
-const sums = fs.readdirSync(path.join(HERE, 'out')).filter((f) => /\.(exe|msi|dmg|apk|aab|ipa)$/.test(f)).sort()
-  .map((f) => `${sha256(path.join(HERE, 'out', f))}  ${f}`);
-fs.writeFileSync(path.join(HERE, 'out/SHA256SUMS'), sums.join('\n') + '\n');
+const sums = fs.readdirSync(OUT).filter((f) => /\.(exe|msi|dmg|apk|aab|ipa|zip)$/.test(f)).sort()
+  .map((f) => `${sha256(path.join(OUT, f))}  ${f}`);
+fs.writeFileSync(path.join(OUT, 'SHA256SUMS'), sums.join('\n') + '\n');
 console.log(sums.join('\n'));
 if (failed.length) { console.error(`not built: ${failed.join(', ')}`); process.exit(1); }

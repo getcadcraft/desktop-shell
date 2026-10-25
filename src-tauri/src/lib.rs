@@ -17,6 +17,8 @@ mod carry;
 mod control;
 mod files;
 mod links;
+#[cfg(target_os = "linux")]
+mod linux;
 // Studio Live (docs/0.5-PLAN.md track LV): the session server, owned by live-core (crypto.rs by live-relay), and Studio's glue
 // for it (studio_live.rs: cadcraftDesktop.live). Default feature `live`; `build.mjs --no-live` leaves both out.
 #[cfg(feature = "live")]
@@ -24,9 +26,16 @@ mod links;
 mod live;
 #[cfg(mobile)]
 mod mobile;
+mod package;
+mod portable;
+#[cfg(desktop)]
+mod print;
 mod protocol;
 #[cfg(feature = "live")]
 mod studio_live;
+// LAN render nodes (0.7 CU.7): finding and reaching other Studios' computers; bytes only (render_nodes.rs).
+#[cfg(all(feature = "live", desktop))]
+mod render_nodes;
 #[cfg(desktop)]
 mod updates;
 mod windows;
@@ -66,6 +75,8 @@ struct ShellConfig {
     account: Option<bool>,
     /// A store package (build.mjs --store): the store updates it; info() says so, so pages word updates right.
     store: bool,
+    /// D7.53: the zip: data beside the program, no updater (portable.rs). Read by portable::init() before this.
+    portable: bool,
     /// W.7: present only when the build has a signed release feed (see updates.rs).
     #[cfg(desktop)]
     updates: Option<updates::UpdateConfig>,
@@ -156,6 +167,11 @@ fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) -> boo
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Portable copy (0.7 D7.53): found before anything reads or writes a data folder.
+    portable::init();
+    // Linux (0.7 D7.57): before WebKitGTK starts, so a driver it can't draw with gives a window, not a black one.
+    #[cfg(target_os = "linux")]
+    linux::guard();
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder
@@ -174,8 +190,14 @@ pub fn run() {
         // W.4b: the main window's size, position, screen and maximized state come back on the next start; a saved place
         // on a screen that is no longer connected is dropped (the plugin checks the monitors). Pop-ups are placed by the
         // app itself (app-panels.js remembers the panels window), so only "main" is kept here.
-        .plugin(tauri_plugin_window_state::Builder::new().with_filter(|label| label == "main").build())
         .plugin(tauri_plugin_updater::Builder::new().build());
+    // A portable copy keeps the main window's place in data/places.json instead (the plugin writes to the PC's profile).
+    #[cfg(desktop)]
+    let builder = if portable::is_portable() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_window_state::Builder::new().with_filter(|label| label == "main").build())
+    };
     // Tablets: documents (Android's Storage Access Framework, iPad's document picker) and the sign-in token's store.
     #[cfg(mobile)]
     let builder = builder.plugin(mobile::init());
@@ -190,6 +212,10 @@ pub fn run() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(desktop)]
+            print::cc_printers_list,
+            #[cfg(desktop)]
+            print::cc_print,
             files::cc_open_dialog,
             files::cc_save_dialog,
             files::cc_open_folder_dialog,
@@ -210,6 +236,7 @@ pub fn run() {
             carry::cc_carry_done,
             cc_info,
             cc_set_fullscreen,
+            cc_is_fullscreen,
             cc_account_window,
             cc_close_window,
             #[cfg(mobile)]
@@ -273,26 +300,49 @@ pub fn run() {
             studio_live::cc_live_start_from,
             #[cfg(all(feature = "live", mobile))]
             studio_live::cc_live_view_closed,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_advertise,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_unadvertise,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_accept,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_browse,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_connect,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_recv,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_send,
+            #[cfg(all(feature = "live", desktop))]
+            render_nodes::cc_render_close,
         ])
         // A window's end also ends its Studio Live session (studio_live.rs).
         .on_window_event(|_w, _e| {
             #[cfg(feature = "live")]
             if matches!(_e, tauri::WindowEvent::Destroyed) {
                 studio_live::on_window_destroyed(_w.app_handle(), _w.label());
+                #[cfg(desktop)]
+                render_nodes::on_window_destroyed(_w.app_handle(), _w.label());
             }
         })
         .setup(|app| {
             let root = site_root(app.handle());
-            let cfg = read_config(&root);
+            let mut cfg = read_config(&root);
+            // D7.53: a portable copy keeps its data beside the program and never replaces itself (updates.rs: it only says
+            // when a newer zip is out).
+            cfg.portable = portable::is_portable();
             let headers = cfg.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            app.manage(windows::Suite::new(cfg.suite, root.clone(), app.path().app_data_dir().ok().map(|d| d.join("places.json"))));
+            app.manage(windows::Suite::new(cfg.suite, root.clone(), portable::data_file(app.handle(), "places.json")));
             // Studio Live: app windows host and join; the suite folder is what browser joiners on the LAN get (LV.12).
             #[cfg(feature = "live")]
             app.manage(studio_live::StudioLive::new(cfg.suite, root.clone()));
+            #[cfg(all(feature = "live", desktop))]
+            app.manage(render_nodes::RenderNodes::new(cfg.suite));
             app.manage(protocol::Site { root, headers });
             #[cfg(desktop)]
             app.manage(control::Control::default());
-            app.manage(files::Grants::load(app.path().app_data_dir().ok().map(|d| d.join("grants.json"))));
+            app.manage(files::Grants::load(portable::data_file(app.handle(), "grants.json")));
             app.manage(files::Launch::default());
             app.manage(links::Links::default());
             app.manage(links::LaunchApps::default());
@@ -301,17 +351,19 @@ pub fn run() {
             let account_on = cfg.account.unwrap_or(true);
             app.manage(account::Account::new(&app.config().identifier, &app_name, account_on));
             // Read by bridge.js before it builds window.cadcraftDesktop (only these flags; no secrets). `mobile`: one web
-            // view, apps as views inside it (bridge.js).
+            // view, apps as views inside it (bridge.js). `nativeFullscreen` (macOS, GH.1): the page's full screen is the
+            // window's own full screen, not WKWebView's element fullscreen (bridge.js nativeFullscreen).
             let flags = format!(
-                "window.__ccShellFlags=Object.freeze({{account:{account_on},suite:{},live:{},mobile:{}}});",
+                "window.__ccShellFlags=Object.freeze({{account:{account_on},suite:{},live:{},mobile:{},nativeFullscreen:{}}});",
                 cfg.suite,
                 cfg!(feature = "live"),
-                cfg!(mobile)
+                cfg!(mobile),
+                cfg!(target_os = "macos")
             );
             app.manage(ShellFlags(flags));
             #[cfg(desktop)]
             {
-                app.manage(updates::Updates::new(cfg.updates.clone(), app.path().app_data_dir().ok().map(|d| d.join("updates.json"))));
+                app.manage(updates::Updates::new(cfg.updates.clone(), cfg.portable, portable::data_file(app.handle(), "updates.json")));
                 updates::on_start(app.handle());
                 let cwd = std::env::current_dir().unwrap_or_default();
                 let args: Vec<String> = std::env::args().skip(1).collect();
@@ -339,23 +391,35 @@ pub(crate) use live::ws::ws_connect;
 /// The desktop's main window: its place from the last run, the carry page on Studio's first start, pop-ups allowed.
 #[cfg(desktop)]
 fn desktop_main_window<R: Runtime>(app: &AppHandle<R>, title: &str, suite: bool) -> tauri::Result<()> {
-    let first_start = !app
-        .path()
-        .app_config_dir()
-        .map(|d| d.join(tauri_plugin_window_state::DEFAULT_FILENAME))
-        .ok()
-        .and_then(|f| std::fs::read(f).ok())
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .is_some_and(|v| v.get("main").is_some());
+    let first_start = if portable::is_portable() {
+        !app.state::<windows::Suite>().has_place("main")
+    } else {
+        !app
+            .path()
+            .app_config_dir()
+            .map(|d| d.join(tauri_plugin_window_state::DEFAULT_FILENAME))
+            .ok()
+            .and_then(|f| std::fs::read(f).ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .is_some_and(|v| v.get("main").is_some())
+    };
     // SD.8: Studio's first start opens on the carry page while the separate apps' data comes over (carry.rs).
-    let carry = carry::Carry::new(app, suite);
+    let carry = carry::Carry::new(app, suite && !portable::is_portable());
     let first_page = if carry.on { ".shell/carry.html" } else { "index.html" };
     app.manage(carry);
-    app_window(app, "main", WebviewUrl::CustomProtocol(protocol::start_url(first_page)), title)
-        // Maximized on the very first start only; after that the window-state plugin brings back the person's own.
-        .inner_size(1440.0, 900.0)
-        .maximized(first_start)
-        .build()?;
+    let main = app_window(app, "main", WebviewUrl::CustomProtocol(protocol::start_url(first_page)), title);
+    // Maximized on the very first start only; after that the window-state plugin (a portable copy: places.json) brings
+    // back the person's own.
+    let main = match app.state::<windows::Suite>().place_for(app, "main").filter(|_| portable::is_portable()) {
+        Some(p) => p.apply(main),
+        None => main.inner_size(1440.0, 900.0).maximized(first_start),
+    };
+    main.build()?;
+    if portable::is_portable() {
+        if let Some(w) = app.get_webview_window("main") {
+            windows::track_place(&w, "main");
+        }
+    }
     // Keep the window's place on disk soon after it stops moving or resizing, not only on a clean exit (a crash or a
     // forced logoff would otherwise lose it).
     if let Some(main) = app.get_webview_window("main") {
@@ -389,8 +453,13 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
     let handle = app.clone();
     let popup_handle = app.clone();
     let popup_title = title.to_string();
-    WebviewWindowBuilder::new(app, label, url)
-        .title(title)
+    let b = WebviewWindowBuilder::new(app, label, url);
+    // Portable (D7.53): one profile folder beside the program for every window (WebView2 wants the same one for all).
+    let b = match portable::webview_dir() {
+        Some(d) => b.data_directory(d),
+        None => b,
+    };
+    b.title(title)
         .initialization_script(&app.state::<ShellFlags>().0)
         .initialization_script(BRIDGE)
         // window.open: the app's own pop-ups (the movable panels' second-monitor window is a same-origin about:blank the
@@ -402,7 +471,15 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
                 return NewWindowResponse::Deny;
             }
             let label = format!("popup-{}", POPUPS.fetch_add(1, Ordering::Relaxed));
-            match WebviewWindowBuilder::new(&popup_handle, label, WebviewUrl::External(url.clone()))
+            // Built on about:blank: the engine loads the asked-for page into the window it is handed (WebView2's NewWindow
+            // must not have navigated; built on the page itself, a hand-off between apps — BimCraft's Takeoff into
+            // TakeoffCraft — closed Studio on Windows, 0.6 Discord report). Tauri's own on_new_window example does the same.
+            let pb = WebviewWindowBuilder::new(&popup_handle, label, WebviewUrl::External("about:blank".parse().expect("about:blank")));
+            let pb = match portable::webview_dir() {
+                Some(d) => pb.data_directory(d),
+                None => pb,
+            };
+            match pb
                 .window_features(features)
                 .title(&popup_title)
                 .on_document_title_changed(|w, t| {
@@ -568,12 +645,14 @@ fn cc_info(app: AppHandle, window: tauri::WebviewWindow, cfg: tauri::State<'_, S
         "version": cfg.version,
         "platform": std::env::consts::OS,
         "store": cfg.store,
+        "portable": cfg.portable,
         "mobile": cfg!(mobile),
     })
 }
 
 /// The page entered or left element fullscreen: the window follows, so it covers the screen (WebView2 alone would only
-/// fill the window's client area). Tablets: the app already fills the screen.
+/// fill the window's client area). On macOS bridge.js calls it instead of WKWebView's element fullscreen (GH.1): the
+/// window's own full screen, the same as the green button. Tablets: the app already fills the screen.
 #[tauri::command]
 fn cc_set_fullscreen(window: tauri::WebviewWindow, on: bool) {
     #[cfg(desktop)]
@@ -582,6 +661,20 @@ fn cc_set_fullscreen(window: tauri::WebviewWindow, on: bool) {
     }
     #[cfg(mobile)]
     let _ = (window, on);
+}
+
+/// Whether the window is full screen now (macOS: bridge.js resolves the page's request on it and notices the person
+/// leaving full screen with the green button or the Window menu, GH.1). Tablets: never.
+#[tauri::command]
+fn cc_is_fullscreen(window: tauri::WebviewWindow) -> bool {
+    #[cfg(desktop)]
+    let on = window.is_fullscreen().unwrap_or(false);
+    #[cfg(mobile)]
+    let on = {
+        let _ = window;
+        false
+    };
+    on
 }
 
 /// The sign-in window (C.2): the shell's own page, one at a time, centred over the app. async: a window built from a
@@ -600,7 +693,11 @@ fn account_window(app: &AppHandle) -> Result<(), String> {
         let _ = w.unminimize();
         return w.set_focus().map_err(|e| e.to_string());
     }
-    let mut b = WebviewWindowBuilder::new(app, "account", WebviewUrl::CustomProtocol(protocol::start_url(".shell/account.html")))
+    let mut b = WebviewWindowBuilder::new(app, "account", WebviewUrl::CustomProtocol(protocol::start_url(".shell/account.html")));
+    if let Some(d) = portable::webview_dir() {
+        b = b.data_directory(d);
+    }
+    let mut b = b
         .title("Sign in to getcadcraft.com")
         .initialization_script(&app.state::<ShellFlags>().0)
         .initialization_script(BRIDGE)

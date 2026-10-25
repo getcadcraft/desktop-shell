@@ -46,5 +46,6 @@ keeps working; it just keeps the old bugs.
 - The installer's NSIS hook grants `ALL APPLICATION PACKAGES` and `ALL RESTRICTED APPLICATION PACKAGES` read/execute on
   `webview2\` (Microsoft's requirement for runtime 120+ in an unpackaged app on Windows 10).
 - `WebView2-NOTICE.txt` beside the exe names the version and says Microsoft's terms apply (not Apache-2.0).
-- The updater (W.7) can't be combined with a fixed runtime (Tauri then forces the download bootstrapper); fixed-runtime
-  installers update by a new installer only.
+- The updater (W.7) works with the fixed runtime since 0.7: Tauri's v2 updater artifacts sign the installer as built (only
+  the old v1 updater rebuilt it with the download bootstrapper). So a Chromium security release reaches installed copies
+  through "Check for updates" once the new installer is published (SIGNING.md § Updates); the portable zip only tells.

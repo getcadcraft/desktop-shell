@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+# CadCraft Studio as MSIX (0.7 MSIX, msix/PACK.md): the layout built natively on Windows, packed with MakeAppx, a throwaway
+# copy signed and installed, the Windows App Certification Kit run on it. The .msix uploaded as an artifact is UNSIGNED: the
+# Microsoft Store signs it. Run by hand; nothing here submits anything.
+name: Studio MSIX
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: The studio repo release to build from (tag), e.g. studio-v0.7.0
+        required: true
+      version:
+        description: Package version x.y.z
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  msix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Tools
+        run: |
+          pip install pillow
+          cargo install tauri-cli --version "^2" --locked
+      - name: Tests (manifest + layout)
+        shell: bash
+        run: node test/msix.test.mjs
+      - name: Get the suite
+        shell: bash
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release download '${{ inputs.suite }}' --repo getcadcraft/studio --pattern '*suite*.zip' --dir suite
+      - name: Layout
+        shell: bash
+        env:
+          # The owner's Partner Center reservation (Product identity), as repository variables.
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY: ${{ vars.MSIX_PUBLISHER_DISPLAY }}
+        run: node build.mjs studio --edition suite/*.zip --store --msix --version '${{ inputs.version }}'
+      - name: Pack
+        shell: pwsh
+        run: |
+          $sdk = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.*\x64\makeappx.exe" | Sort-Object FullName | Select-Object -Last 1).DirectoryName
+          $layout = (Get-ChildItem out\msix -Directory | Select-Object -First 1).FullName
+          & "$sdk\makeappx.exe" pack /d $layout /p out\CadCraft-Studio-${{ inputs.version }}.msix /o
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$sdk\makeappx.exe" unpack /p out\CadCraft-Studio-${{ inputs.version }}.msix /d $env:TEMP\msix-check /o
+      - name: Certification kit
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # WACK wants a signed package to install; a throwaway copy, never uploaded.
+          $pub = "${{ vars.MSIX_PUBLISHER }}"
+          if (-not $pub) { Write-Warning "No MSIX_PUBLISHER: WACK needs the manifest's publisher as the test certificate's subject; skipped."; exit 0 }
+          $sdk = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1).DirectoryName
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $pub -KeyUsage DigitalSignature -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          Copy-Item out\CadCraft-Studio-${{ inputs.version }}.msix out\wack-copy.msix
+          & "$sdk\signtool.exe" sign /fd SHA256 /sha1 $cert.Thumbprint out\wack-copy.msix
+          $kit = "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\appcert.exe"
+          & $kit reset
+          & $kit test -appxpackagepath out\wack-copy.msix -reportoutputpath out\wack.xml
+          Remove-Item out\wack-copy.msix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-msix
+          path: |
+            out/CadCraft-Studio-*.msix
+            out/wack.xml

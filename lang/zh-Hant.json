@@ -1,0 +1,33 @@
+{
+  "@locale": "zh-Hant",
+  "@name": "繁體中文",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "登入getcadcraft.com",
+  "desktop.account.signed_out.text": "登入後，本應用程式即可開啟與儲存雲端圖形。此處會取得一組短代碼，於自己的瀏覽器中在網站上核准。不會輸入或複製任何機密資料。",
+  "desktop.account.get_code": "取得代碼",
+  "desktop.account.not_now": "暫不登入",
+  "desktop.account.waiting.title": "在網站上核准此代碼",
+  "desktop.account.waiting.text": "瀏覽器已開啟getcadcraft.com/device。請確認其中顯示的是此代碼，再予以核准。",
+  "desktop.account.waiting.own": "只核准在本應用程式中顯示的代碼。",
+  "desktop.account.waiting.left": {
+    "=1": "此代碼還可使用1分鐘。",
+    "other": "此代碼還可使用{n}分鐘。"
+  },
+  "desktop.account.waiting.out": "代碼已過期。",
+  "desktop.account.open_device": "開啟getcadcraft.com/device",
+  "desktop.account.cancel": "取消",
+  "desktop.account.signed_in.title": "已登入",
+  "desktop.account.signed_in.who": "已登入。",
+  "desktop.account.signed_in.text": "本電腦會保持登入，直到在此登出，或在getcadcraft.com的帳戶 › 安全性中將其移除。",
+  "desktop.account.sign_out": "登出",
+  "desktop.account.done": "完成",
+  "desktop.account.only_desktop": "此視窗只能在CadCraft桌面應用程式中使用。",
+  "desktop.reason.throttled": "短時間內要求的代碼過多。請幾分鐘後再試。",
+  "desktop.reason.expired": "代碼在核准前已過期。請重新取得一組。",
+  "desktop.reason.denied": "網站上已拒絕此次登入。",
+  "desktop.reason.revoked": "本電腦已在getcadcraft.com上登出。若要使用雲端圖形，請重新登入；本電腦上的內容都沒有遺失。",
+  "desktop.reason.offline_signout": "已在本電腦上登出。無法連線至網站：此登入也列於getcadcraft.com/account/security，可在該處移除。",
+  "desktop.reason.keystore": "本電腦的憑證儲存區拒絕了此次登入。",
+  "desktop.carry.title": "正在設定CadCraft Studio",
+  "desktop.carry.text": "正在匯入先前安裝的各個獨立應用程式的設定、最近檔案與復原複本。"
+}

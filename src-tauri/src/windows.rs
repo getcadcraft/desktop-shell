@@ -33,6 +33,24 @@ pub struct Place {
     maximized: bool,
 }
 
+impl Place {
+    /// A saved place counts only when a connected screen shows enough of it.
+    fn shown_on(&self, monitors: &[tauri::Monitor]) -> bool {
+        monitors.iter().any(|m| {
+            let (mp, ms) = (m.position(), m.size());
+            let x = (self.x + self.w as i32).min(mp.x + ms.width as i32) - self.x.max(mp.x);
+            let y = (self.y + self.h as i32).min(mp.y + ms.height as i32) - self.y.max(mp.y);
+            x >= 64 && y >= 32
+        })
+    }
+
+    /// The window builder at this place.
+    #[cfg(desktop)]
+    pub fn apply<'a, R: Runtime>(&self, b: tauri::WebviewWindowBuilder<'a, R, AppHandle<R>>) -> tauri::WebviewWindowBuilder<'a, R, AppHandle<R>> {
+        b.inner_size(self.w.max(960) as f64, self.h.max(600) as f64).position(self.x as f64, self.y as f64).maximized(self.maximized)
+    }
+}
+
 pub struct Suite {
     pub on: bool,
     site_root: PathBuf,
@@ -47,6 +65,17 @@ impl Suite {
     pub fn new(on: bool, site_root: PathBuf, places_file: Option<PathBuf>) -> Self {
         let places = places_file.as_ref().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         Suite { on, site_root, launch: Mutex::new(HashMap::new()), places: Mutex::new(places), places_file, next: AtomicU32::new(1) }
+    }
+
+    /// A portable copy keeps the main window's place here too (key "main"; an install uses the window-state plugin).
+    pub fn has_place(&self, key: &str) -> bool {
+        self.places.lock().unwrap().contains_key(key)
+    }
+
+    #[cfg(desktop)]
+    pub fn place_for<R: Runtime>(&self, app: &AppHandle<R>, key: &str) -> Option<Place> {
+        let monitors = app.available_monitors().unwrap_or_default();
+        self.places.lock().unwrap().get(key).copied().filter(|p| p.shown_on(&monitors))
     }
 
     /// The window's own files (for cc_launch_files), each handed over once.
@@ -64,6 +93,32 @@ impl Suite {
             let _ = std::fs::write(f, serde_json::to_vec(&*m).unwrap_or_default());
         }
     }
+}
+
+/// Keeps a window's place under `key` as it moves, written when it closes (the main window of a portable copy).
+#[cfg(desktop)]
+pub fn track_place<R: Runtime>(w: &WebviewWindow<R>, key: &str) {
+    let (h, k, wc) = (w.app_handle().clone(), key.to_string(), w.clone());
+    w.on_window_event(move |e| match e {
+        WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            if let Some(p) = place_of(&wc) {
+                h.state::<Suite>().places.lock().unwrap().insert(k.clone(), p);
+            }
+        }
+        WindowEvent::CloseRequested { .. } => {
+            if let Some(p) = place_of(&wc) {
+                h.state::<Suite>().remember(&k, p);
+            }
+        }
+        WindowEvent::Destroyed => {
+            let st = h.state::<Suite>();
+            let last = st.places.lock().unwrap().get(&k).copied();
+            if let Some(p) = last {
+                st.remember(&k, p);
+            }
+        }
+        _ => {}
+    });
 }
 
 /// "app-cadcraft-3" → "cadcraft"; "main" → "studio".
@@ -158,17 +213,10 @@ pub fn cc_windows_open<R: Runtime>(
     // A saved place counts only when a connected screen shows enough of it (checked before the window exists: right after
     // it is built, GTK has not placed it yet).
     let monitors = app.available_monitors().unwrap_or_default();
-    let place = suite.places.lock().unwrap().get(&args.app).copied().filter(|p| {
-        monitors.iter().any(|m| {
-            let (mp, ms) = (m.position(), m.size());
-            let x = (p.x + p.w as i32).min(mp.x + ms.width as i32) - p.x.max(mp.x);
-            let y = (p.y + p.h as i32).min(mp.y + ms.height as i32) - p.y.max(mp.y);
-            x >= 64 && y >= 32
-        })
-    });
+    let place = suite.places.lock().unwrap().get(&args.app).copied().filter(|p| p.shown_on(&monitors));
     let b = crate::app_window(&app, &label, WebviewUrl::CustomProtocol(url), &args.app);
     let b = match place {
-        Some(p) => b.inner_size(p.w.max(960) as f64, p.h.max(600) as f64).position(p.x as f64, p.y as f64).maximized(p.maximized),
+        Some(p) => p.apply(b),
         None => b.inner_size(1440.0, 900.0).maximized(true),
     };
     let w = b.build().map_err(|e| e.to_string())?;

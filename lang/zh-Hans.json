@@ -1,0 +1,33 @@
+{
+  "@locale": "zh-Hans",
+  "@name": "简体中文",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "登录getcadcraft.com",
+  "desktop.account.signed_out.text": "登录后，此应用可以打开和保存你的云端图纸。这里会显示一个短代码，你在网站上通过自己的浏览器批准即可。无需输入或复制任何机密信息。",
+  "desktop.account.get_code": "获取代码",
+  "desktop.account.not_now": "暂不登录",
+  "desktop.account.waiting.title": "请在网站上批准此代码",
+  "desktop.account.waiting.text": "浏览器已打开getcadcraft.com/device。请确认其中显示的是此代码，然后批准。",
+  "desktop.account.waiting.own": "只批准在你自己的应用中显示的代码。",
+  "desktop.account.waiting.left": {
+    "=1": "代码还可使用1分钟。",
+    "other": "代码还可使用{n}分钟。"
+  },
+  "desktop.account.waiting.out": "代码已失效。",
+  "desktop.account.open_device": "打开getcadcraft.com/device",
+  "desktop.account.cancel": "取消",
+  "desktop.account.signed_in.title": "已登录",
+  "desktop.account.signed_in.who": "已登录。",
+  "desktop.account.signed_in.text": "这台计算机会一直保持登录，直到你在此处退出登录，或在getcadcraft.com的“账户”“安全”中将其移除。",
+  "desktop.account.sign_out": "退出登录",
+  "desktop.account.done": "完成",
+  "desktop.account.only_desktop": "此窗口只能在CadCraft桌面应用中使用。",
+  "desktop.reason.throttled": "短时间内获取的代码过多。请几分钟后再试。",
+  "desktop.reason.expired": "代码在获得批准之前已失效。请重新获取。",
+  "desktop.reason.denied": "网站上拒绝了此次登录。",
+  "desktop.reason.revoked": "这台计算机已在getcadcraft.com上被退出登录。请重新登录以使用你的云端图纸；这台计算机上的内容没有丢失。",
+  "desktop.reason.offline_signout": "已在这台计算机上退出登录。无法连接网站：该登录记录仍列在getcadcraft.com/account/security中，你可以在那里将其移除。",
+  "desktop.reason.keystore": "这台计算机的凭据存储拒绝了此次登录。",
+  "desktop.carry.title": "正在设置CadCraft Studio",
+  "desktop.carry.text": "正在从之前安装的各独立应用中带入你的设置、最近使用的文件和恢复副本。"
+}

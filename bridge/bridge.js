@@ -11,7 +11,7 @@
  *   readFile(path) → Uint8Array            writeFile(path, Uint8Array) → undefined (atomic, done by the shell)
  *   stat(path) → {size, mtime} | null      listDir(path) → [{name, dir}]  (folders first, then by name)
  *   launchFiles() → paths (each once)      onOpenFiles(cb(paths))          (double-click while running)
- *   info() → {shell, app, name, version, platform, windowId, suite, store}   store: a store package (the store updates it)
+ *   info() → {shell, app, name, version, platform, windowId, suite, store, portable}   store: a store package (the store updates it); portable: the zip (no updater, data beside the program)
  *   account.status() / signIn() / cancel() / signOut() → {state: signed_out|waiting|signed_in, user{name,email},
  *     code, verificationUri, expiresAt, reason, message}       account.onChange(cb)   account.open() (the sign-in window)
  *   cloud.request({method, path, body, contentType}) → {status, headers, body: Uint8Array, json()}
@@ -27,7 +27,17 @@
  *   control.onRequest(cb(message, session {id}, reply(answer | null)))   Studio's local MCP server (X.5); hub window only
  *   links.launch() → ['ccstudio://join/<ROOM>#<secret>', …] (each once)   links.onOpen(cb(url))   Studio's hub only:
  *     invite links the system opened Studio with (LV.25), untouched; the fragment is the session key, never log it
- *   updates.status() → {available (the build has a feed), auto}   updates.check() (asks before installing)
+ *   printers {list() → {accepts: 'pdf'|'png', printers: [{name, default, papers[]}]}, print(bytes, {printer, copies, paper, landscape, title})}
+ *                 (0.7 D7.20, print.rs; computers only)
+ *   renderNodes (LAN render nodes, render_nodes.rs, 0.7 CU.7; Studio's app windows on computers; the shell finds nodes and
+ *     carries bytes, the pages do the handshake): advertise(tag) → stopAdvertising() → onConnection(cb(transport)) →
+ *     browse() → [{tag, name, host, port}] · onNodes(cb(list)) → unsubscribe · connect({host, port}) → transport
+ *     transport = {send(Uint8Array), close(), onmessage, onclose}; mDNS `_ccrender._tcp` (the 2-character tag only),
+ *     `ws://<private address>:<port>/render`, ≤ 8 MiB a message, one peer at a time per node
+ *   updates.status() → {available (this copy has an update source), auto, autoAllowed, source (feed | notify | package),
+ *     route (store | appinstaller | sideloaded: an MSIX), edition, version, platform, busy, last {at, outcome, latest, notes}}
+ *     updates.check() (asks before installing; 'current' | 'declined' | 'download' | 'installing' | …); a failure's
+ *     `err.code`: no_build | network | feed | signature | install | not_store (the hub words each; D7.54, 0.7 MSIX)
  *   updates.setAuto(bool)                                                                              (W.7)
  *   live (Studio Live, studio_live.rs; Studio builds with the `live` feature; app windows, browse also the hub):
  *     transport('local' | 'join', {app, schema, url}) → a live-client transport ((handlers) → {send(bytes), close()})
@@ -215,6 +225,82 @@
       get connecting() { return !opened && !closed; },
     };
   };
+  // ---- LAN render nodes (render_nodes.rs, 0.7 CU.7). The shell finds nodes and carries bytes; the pages do the handshake and
+  // the encryption. A transport is {send(Uint8Array), close(), onmessage, onclose}: messages that arrive before onmessage is
+  // set wait for it, and onclose fires once, after the last message. Sends go out one at a time (order matters).
+  const renderTransport = (id) => {
+    let closed = false, closeFired = false, busy = false, onmessage = null, onclose = null;
+    const out = [], inbox = [];
+    const deliver = () => {
+      while (onmessage && inbox.length) { try { onmessage(inbox.shift()); } catch { /* the page's handler's problem */ } }
+      if (closed && !inbox.length && onclose && !closeFired) { closeFired = true; try { onclose(); } catch { /* same */ } }
+    };
+    const flush = () => {
+      if (busy || closed || !out.length) return;
+      busy = true;
+      inv('cc_render_send', wire(out.shift()), { headers: { 'x-cc-render': String(id) } }).catch(() => end()).finally(() => { busy = false; flush(); });
+    };
+    const end = () => { if (closed) return; closed = true; inv('cc_render_close', { id }).catch(() => {}); deliver(); };
+    (async () => {
+      while (!closed) {
+        let raw;
+        try { raw = await inv('cc_render_recv', { id }); } catch { end(); return; }
+        const u8 = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+        const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+        for (let p = 0; p + 5 <= u8.length && !closed;) {
+          const k = u8[p], n = dv.getUint32(p + 1), body = u8.slice(p + 5, p + 5 + n);
+          p += 5 + n;
+          if (k === 1) { inbox.push(body); deliver(); } else if (k === 2) { end(); return; }
+        }
+      }
+    })();
+    return {
+      send(b) { if (!closed) { out.push(bytesOf(b).slice()); flush(); } },
+      close() { if (closed) return; closed = true; inv('cc_render_close', { id }).catch(() => {}); deliver(); },
+      get onmessage() { return onmessage; }, set onmessage(f) { onmessage = typeof f === 'function' ? f : null; deliver(); },
+      get onclose() { return onclose; }, set onclose(f) { onclose = typeof f === 'function' ? f : null; deliver(); },
+    };
+  };
+  const renderNodes = (() => {
+    const conns = new Set(), waiting = [], nodeSubs = new Set();
+    let acceptOn = false, poll = 0, last = '';
+    const hand = (t) => { if (conns.size) conns.forEach((cb) => { try { cb(t); } catch { /* the page's problem */ } }); else waiting.push(t); };
+    const acceptLoop = async () => {
+      if (acceptOn) return;
+      acceptOn = true;
+      try { for (;;) { const id = await inv('cc_render_accept'); if (id === null || id === undefined) break; hand(renderTransport(id)); } } catch { /* the node stopped */ }
+      acceptOn = false;
+    };
+    const browse = async (ms = 1500) => {
+      const list = await call('cc_render_browse', { args: { ms: Math.max(100, Math.min(5000, Number(ms) || 1500)) } });
+      return Array.isArray(list) ? list : [];
+    };
+    const tick = async () => {
+      let list = [];
+      try { list = await browse(); } catch { list = []; }
+      const key = JSON.stringify(list);
+      if (key !== last) { last = key; nodeSubs.forEach((cb) => { try { cb(list); } catch { /* same */ } }); }
+    };
+    return Object.freeze({
+      advertise: async (tag) => { await call('cc_render_advertise', { args: { tag: String(tag || '') } }); acceptLoop(); },
+      stopAdvertising: () => call('cc_render_unadvertise'),
+      onConnection: (cb) => {
+        if (typeof cb !== 'function') return () => {};
+        conns.add(cb);
+        while (waiting.length) cb(waiting.shift());
+        return () => conns.delete(cb);
+      },
+      browse: () => browse(),
+      onNodes: (cb) => {
+        if (typeof cb !== 'function') return () => {};
+        nodeSubs.add(cb);
+        if (!poll) { poll = setInterval(tick, 5000); }
+        tick();
+        return () => { nodeSubs.delete(cb); if (!nodeSubs.size && poll) { clearInterval(poll); poll = 0; last = ''; } };
+      },
+      connect: async (o = {}) => renderTransport(await call('cc_render_connect', { args: { host: String((o && o.host) || ''), port: Number(o && o.port) || 0 } })),
+    });
+  })();
   // LV.19 / SI.8: the site signs this connection's audience for the signed-in account; the 64 × 64 picture travels as its
   // exact bytes (its sha256 is in the assertion). Signed out, offline or refused: null (the host sees the typed name).
   const liveSignIn = async (aud) => {
@@ -305,6 +391,15 @@
       startFrom: (bytes) => call('cc_live_start_from', wire(bytesOf(bytes))),
       signIn: liveSignIn,
     }),
+    renderNodes,
+    // Printing (0.7 D7.20, print.rs): the system's printers, and a plotted sheet sent to one. `accepts` says what to send:
+    // 'pdf' (CUPS: Linux, macOS) or 'png' (Windows prints an image through .NET).
+    printers: Object.freeze({
+      list: () => call('cc_printers_list'),
+      print: (bytes, job = {}) => call('cc_print', wire(bytesOf(bytes)), { headers: { 'x-cc-print': encodeURIComponent(JSON.stringify({
+        printer: String(job.printer || ''), copies: Math.max(1, Math.min(99, Math.round(Number(job.copies) || 1))), paper: String(job.paper || ''),
+        landscape: !!job.landscape, title: String(job.title || '') })) } }),
+    }),
     updates: Object.freeze({
       status: () => call('cc_updates_status'),
       check: () => call('cc_updates_check'),
@@ -314,22 +409,32 @@
   // Tablets: no updater (the store updates it), no local MCP server, Live with TB.5; views instead of windows.
   if (mobile) {
     delete bridge.updates;
+    delete bridge.printers;
     delete bridge.control;
     tabletBridge(bridge);
   }
   // A build without sign-in (store builds, shell.json account:false) has no account or cloud at all.
   if (flags.account === false) { delete bridge.account; delete bridge.cloud; }
   if (flags.suite !== true) { delete bridge.windows; delete bridge.control; delete bridge.links; }
+  if (flags.suite !== true || flags.live !== true || mobile) delete bridge.renderNodes;   // computers only (CU.7)
   if (flags.suite !== true || flags.live !== true) delete bridge.live;
   else if (flags.account === false && bridge.live) { const { signIn, ...rest } = bridge.live; bridge.live = Object.freeze(rest); }   // eslint-disable-line no-unused-vars
   Object.defineProperty(window, 'cadcraftDesktop', { value: Object.freeze(bridge), enumerable: true });
 
   if (mobile) return;
 
-  // Element fullscreen (the app bar's screen modes) fills only the webview unless the window goes fullscreen with it.
-  document.addEventListener('fullscreenchange', () => {
-    T.invoke('cc_set_fullscreen', { on: !!document.fullscreenElement }).catch(() => {});
-  });
+  // Full screen (the app bar's screen modes, site assets/js/app-shell.js). Windows and Linux: element fullscreen fills
+  // only the web view, so the window follows it. macOS (flags.nativeFullscreen; GH.1, desktop-shell#1): WKWebView's
+  // element fullscreen already puts the page in a full-screen window of WebKit's own, and taking the app's window full
+  // screen on top of that made WebKit leave again at once (the in-app button went in and straight back out; the green
+  // button, the window's own full screen, worked). So there the page's request goes to the window's own full screen
+  // instead, reported back through the standard API (nativeFullscreen below).
+  if (flags.nativeFullscreen === true) nativeFullscreen();
+  else {
+    document.addEventListener('fullscreenchange', () => {
+      T.invoke('cc_set_fullscreen', { on: !!document.fullscreenElement }).catch(() => {});
+    });
+  }
 
   // window.open('') means about:blank (HTML spec), and the panels window opens that way. WebKitGTK hands the shell the
   // empty string, which is not a URL, so the shell refused the window on Linux (found with DR.5). Say it in full.
@@ -337,6 +442,83 @@
   window.open = function (url, ...rest) {
     return open.call(this, url === undefined || url === null || url === '' ? 'about:blank' : url, ...rest);
   };
+
+  // ---- macOS full screen (GH.1) ----------------------------------------------------------------------------------------
+  // documentElement.requestFullscreen() → the window's own full screen (cc_set_fullscreen, the green button's path),
+  // resolved once the window says it is full screen; then document.fullscreenElement is the document element and
+  // fullscreenchange fires, as in a browser. exitFullscreen() and Esc leave it. Leaving any other way (the green button,
+  // Window › Exit Full Screen, Ctrl+Cmd+F) is noticed on the next resize (or within a second) and reported the same way,
+  // so app-shell.js drops back to normal. Other elements keep WebKit's own element fullscreen (no app uses one).
+  function nativeFullscreen() {
+    const EP = window.Element && window.Element.prototype;
+    const DP = window.Document && window.Document.prototype;
+    if (!EP || !DP) return;
+    const doc = document;
+    const ownRequest = EP.requestFullscreen;
+    const ownExit = DP.exitFullscreen;
+    const ownElement = Object.getOwnPropertyDescriptor(DP, 'fullscreenElement');
+    const webkitElement = () => (ownElement && ownElement.get ? ownElement.get.call(doc) : null);
+    let full = null;      // the document element while the window is full screen for the page
+    let asking = null;    // a request on its way (one at a time)
+    let poll = 0;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const isFull = () => T.invoke('cc_is_fullscreen').then((v) => v === true, () => false);
+    const changed = () => {
+      const root = doc.documentElement;
+      const ev = new Event('fullscreenchange', { bubbles: true });
+      if (root) root.dispatchEvent(ev); else doc.dispatchEvent(ev);
+    };
+    const drop = () => {
+      if (!full) return;
+      full = null;
+      clearInterval(poll);
+      poll = 0;
+      changed();
+    };
+    const check = async () => { if (full && !asking && !(await isFull())) drop(); };
+
+    EP.requestFullscreen = function (opts) {
+      if (this !== doc.documentElement) {
+        return ownRequest ? ownRequest.call(this, opts) : Promise.reject(new TypeError('Full screen is not available'));
+      }
+      if (full) return Promise.resolve();
+      if (asking) return asking;
+      asking = (async () => {
+        try {
+          await T.invoke('cc_set_fullscreen', { on: true });
+          let on = false;
+          for (let i = 0; i < 40 && !on; i++) { on = await isFull(); if (!on) await sleep(75); }   // ≤ 3 s
+          if (!on) throw new TypeError('The window did not go full screen');
+          full = this;
+          poll = setInterval(check, 1000);
+          changed();
+        } finally {
+          asking = null;
+        }
+      })();
+      return asking;
+    };
+    DP.exitFullscreen = function () {
+      if (this !== doc || !full) {
+        return ownExit && webkitElement() ? ownExit.call(this) : Promise.reject(new TypeError('Not in full screen'));
+      }
+      drop();
+      return T.invoke('cc_set_fullscreen', { on: false }).then(() => undefined, () => undefined);
+    };
+    Object.defineProperty(DP, 'fullscreenElement', {
+      configurable: true,
+      enumerable: true,
+      get() { return this === doc && full ? full : (ownElement && ownElement.get ? ownElement.get.call(this) : null); },
+    });
+    Object.defineProperty(DP, 'fullscreenEnabled', { configurable: true, enumerable: true, get() { return true; } });
+
+    let settle = 0;
+    window.addEventListener('resize', () => { clearTimeout(settle); settle = setTimeout(check, 250); });
+    // Esc leaves full screen, as in a browser (the apps still see the key).
+    window.addEventListener('keydown', (e) => {
+      if (full && e.key === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) doc.exitFullscreen().catch(() => {});
+    }, true);
+  }
 
   // ---- Tablets (TB.1) ------------------------------------------------------------------------------------------------
   function err(code, msg) { const e = new Error(`${code}: ${msg}`); e.code = code; return e; }

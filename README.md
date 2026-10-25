@@ -16,11 +16,17 @@ desktop-shell/
     src/protocol.rs     serves app/ from the install folder: http://cadcraft.localhost/ (Windows) · cadcraft://localhost/
     src/files.rs        window.cadcraftDesktop's commands + the grant list (only files the person chose)
     src/account.rs      sign-in with a short code (C.2): token only in the OS credential store; cloud.request → sync API
-    src/updates.rs      signed updates (W.7): only with a feed + the owner's key in shell.json; always asks
+    src/updates.rs      updates (W.7; 0.7 one endpoint): the Tauri updater (installer, .deb, AppImage), tell-only (portable),
+                        Windows' own route for an MSIX (package.rs); always asks; last check kept for Settings › Updates
+    src/package.rs      0.7 MSIX: package identity, App Installer (website package) and StoreContext (Store) updates
     src/windows.rs      suite mode (Studio): the hub + app windows, per-app window places
     src/control.rs      Studio's local MCP server (X.5): 127.0.0.1, token, Origin/Host rules → the hub window
     src/links.rs        Studio: ccstudio://join/… invite links and --app=<slug> shortcuts, handed to the hub (0.5)
     src/carry.rs        Studio's first start: the separate 0.4 apps' data comes over (0.5 SD.8; page bridge/carry.html)
+    src/render_nodes.rs LAN render nodes (0.7 CU.7): `_ccrender._tcp` mDNS + a `/render` WebSocket for the pages' own sealed
+                        frames; bytes only, private peers only, one at a time (cadcraftDesktop.renderNodes)
+    src/portable.rs     the portable zip (0.7 D7.53): shell.json "portable": true → data/ beside the program, the web view's profile there, no updater
+    src/linux.rs        Linux: WEBKIT_DISABLE_DMABUF_RENDERER=1 unless the person set it (no black window; 0.7 D7.57)
     src/live/           Studio Live (live-core, live-relay): built with --features live until it is wired in
     gen/android/        the Android project (cargo tauri android init, then edited; committed): CadcraftPlugin.kt,
                         manifest, ProGuard rules, the upload-key signing config
@@ -35,7 +41,11 @@ desktop-shell/
   lang/                 the shell's own words: en.json + es-MX.json and id.json (drafts), keys desktop.*
   macos/                Studio's Info.plist keys + Mac App Store entitlements (not built yet: S.5/S.6 need a Mac)
   webview2.mjs          is the WebView2 runtime current? (build.mjs refuses an old one; RUNTIME.md = the routine)
-  SIGNING.md            code signing (W.6): what the owner provides, how builds sign
+  SIGNING.md            code signing (W.6): what the owner provides, how builds sign; sign-preflight.mjs = what is missing
+  updater-feed.mjs      the update entries (one per signed file and edition) the site's update endpoint serves (add / list / check)
+  updater-key.pub       the owner's updater public key (the private key: /var/www/CADCRAFT/secrets/updater, never here)
+  msix/                 CadCraft Studio as MSIX: Store + website packages (manifest, layout, pack.mjs = a Linux packer,
+                        appinstaller.mjs, PACK.md; 0.7)
   apps.json             per app: file types (own / polite / open with)
   build.mjs             edition → stage/<slug>/ → installer in out/ (+ SHA256SUMS)
   make-icon.py          the app's icon: the CadCraft mark on its layer colour
@@ -58,9 +68,11 @@ desktop-shell/
 - **Downloads** (apps that still use `<a download>`) open a "Save as" dialog instead of landing in Downloads.
 - **Links** that leave the app open in the person's browser. The app's own pop-ups (the panels window) are real windows.
 - **Double-click** a file while the app runs: the second start hands the path to the running window and exits.
-- **Element fullscreen** (the app bar's screen modes) takes the window fullscreen with it.
+- **Element fullscreen** (the app bar's screen modes) takes the window fullscreen with it. On macOS the page's request
+  goes straight to the window's own full screen (the green button's) instead of WKWebView's element fullscreen, and the
+  bridge reports it back through the standard API (`flags.nativeFullscreen`, `cc_is_fullscreen`; GH.1, issue #1).
 - **shell.json** (written by build.mjs): `{app, name, version, headers, suite?, account?, updates?}`. `account: false` (store
-  builds until decision 11) removes sign-in and the cloud; `suite: true` is Studio; `updates` only with the owner's key.
+  builds until decision 11) removes sign-in and the cloud; `suite: true` is Studio; `updates {endpoint, pubkey, auto, edition}` only with the owner's key (an MSIX: `edition` alone).
 - **Studio (suite mode):** the hub is the main window and opens each app in windows of its own
   (`cadcraftDesktop.windows.*`); files opened at launch go to the hub, which routes them. The hub can run the local MCP
   server (`cadcraftDesktop.control.*`), whose rules match `getcadcraft.com/tools/mcp/live-server.mjs`.
@@ -94,6 +106,9 @@ node build.mjs cadcraft --target linux  # unbundled Linux binary (tests)
 node build.mjs studio --edition <suite> # Studio: hub + eight apps (the studio repo's pack/suite.mjs)
 node build.mjs cadcraft --store --edition <store edition zip>   # store package: no sign-in, no update feed
 node build.mjs cadcraft --edition <zip> --webview2-fixed <extracted cab> --version 0.4.1   # carries WebView2 (~230 MB)
+node build.mjs studio --edition <suite> --webview2-fixed <runtime> --portable   # + out/<Name>-<v>-portable.zip: unpack and run, data beside it (portable/layout.mjs)
+node build.mjs studio --edition <suite> --store --msix            # the Store's .msix (packed here; msix/PACK.md)
+node build.mjs studio --edition <suite> --msix                    # the website's .msix + .appinstaller (signed with CC_MSIX_SIGN_COMMAND)
 node build.mjs studio --edition <suite> --target android          # tablets: a test APK (debug-signed, with sign-in)
 node build.mjs studio --edition <suite> --target android --release   # the Google Play AAB (CC_ANDROID_KEYSTORE…: the owner's key)
 node build.mjs studio --edition <suite> --target ios [--release]     # on a Mac (IPAD.md): a test .ipa, or the App Store Connect export
@@ -103,7 +118,7 @@ node build.mjs studio --edition <suite> --target ios [--release]     # on a Mac 
 `Microsoft.WebView2.FixedVersionRuntime.<v>.x64.cab`, from Microsoft's WebView2 download page) in the install as
 `webview2/`, so the installer never asks for WebView2. It needs a Linux cross-build. The runtime never updates itself:
 rebuild with a newer one for Chromium security fixes (the routine: `RUNTIME.md`). `build.mjs` refuses a runtime older
-than the newest Edge Stable release of its major (`webview2.mjs`). It can't be combined with the updater.
+than the newest Edge Stable release of its major (`webview2.mjs`). Since 0.7 it carries the updater (v2 artifacts keep the runtime).
 
 Needs: Rust + `cargo tauri` + `cargo-xwin` (Windows cross-compile), NSIS (`makensis`), Python 3 + Pillow, and for
 Linux/tests `libwebkit2gtk-4.1-dev`, `webkit2gtk-driver`, `xvfb`, `matchbox-window-manager`. MSI and code signing need
@@ -133,7 +148,15 @@ With `--edition <dir|zip>`, `build.mjs` needs none of them (that is how CI build
   (needs `CADCRAFT_SITE`).
 - `node test/bridge.test.mjs`: the bridge against a stand-in shell, and the site's `host.js` on top of it (with
   `CADCRAFT_SITE` or `CADCRAFT_HOST_JS` set; without them the host.js checks skip).
+- `CADCRAFT_SITE=… node test/fullscreen-mac.mjs`: the site's app-shell.js screen modes on top of the bridge with the macOS
+  flag, in Chromium with a stand-in shell (button, Ctrl+Shift+F, Esc, leaving with the green button). Not a Mac: the
+  real check is by hand on one.
+- `node test/portable.test.mjs`: the portable zip's folder (flag, no feed, no data shipped); `cargo test --lib portable`: the flag is read from shell.json.
 - `node test/webview2.test.mjs`: the runtime-age rule on a stand-in feed (no network).
+- `node test/feed.test.mjs` (the update entries, the gate), `node test/msix.test.mjs` (manifest, layouts, the packer, .appinstaller),
+  `node test/preflight.test.mjs` (what signing is missing), `node test/apple.test.mjs` (the Apple project).
+- The Linux packages (.deb, AppImage) are built by `stores/linux/build.mjs` in the site's checkout, not here; `.github/workflows/linux.yml`
+  keeps the shell building and tested on Linux.
 - `node test/lang.test.mjs`: the shell's language files and their loader.
 - `CADCRAFT_STUDIO=… CADCRAFT_SITE=… node test/tablet.mjs [--shots dir]`: Studio as a tablet runs it, in Chromium at tablet
   size with touch (bridge.js in every frame with `flags.mobile`, a stand-in shell): views, Back, documents through host.js,

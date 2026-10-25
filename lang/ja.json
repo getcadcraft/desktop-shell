@@ -1,0 +1,33 @@
+{
+  "@locale": "ja",
+  "@name": "日本語",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "getcadcraft.comにサインイン",
+  "desktop.account.signed_out.text": "サインインすると、このアプリでクラウド上の図面を開いたり保存したりできます。ここに表示される短いコードを、ご自身のブラウザーでWebサイト上から承認してください。秘密の情報を入力したりコピーしたりする必要はありません。",
+  "desktop.account.get_code": "コードを取得",
+  "desktop.account.not_now": "あとで",
+  "desktop.account.waiting.title": "Webサイトでこのコードを承認してください",
+  "desktop.account.waiting.text": "ブラウザーでgetcadcraft.com/deviceが開きました。このコードが表示されていることを確認してから承認してください。",
+  "desktop.account.waiting.own": "承認するのは、ご自身のアプリに表示されたコードだけにしてください。",
+  "desktop.account.waiting.left": {
+    "=1": "コードの有効時間はあと1分です。",
+    "other": "コードの有効時間はあと{n}分です。"
+  },
+  "desktop.account.waiting.out": "コードの有効期限が切れました。",
+  "desktop.account.open_device": "getcadcraft.com/deviceを開く",
+  "desktop.account.cancel": "キャンセル",
+  "desktop.account.signed_in.title": "サインイン済み",
+  "desktop.account.signed_in.who": "サインインしています。",
+  "desktop.account.signed_in.text": "このコンピューターは、ここでサインアウトするか、getcadcraft.comの「アカウント」の「セキュリティ」で削除するまで、サインインしたままになります。",
+  "desktop.account.sign_out": "サインアウト",
+  "desktop.account.done": "完了",
+  "desktop.account.only_desktop": "このウィンドウは、CadCraftデスクトップアプリの中でのみ動作します。",
+  "desktop.reason.throttled": "短時間にコードが多数要求されました。数分後にもう一度お試しください。",
+  "desktop.reason.expired": "承認される前にコードの有効期限が切れました。新しいコードを取得してください。",
+  "desktop.reason.denied": "サインインはWebサイトで拒否されました。",
+  "desktop.reason.revoked": "このコンピューターはgetcadcraft.comでサインアウトされました。クラウド上の図面を使うには、もう一度サインインしてください。このコンピューター上のデータは失われていません。",
+  "desktop.reason.offline_signout": "このコンピューターでサインアウトしました。Webサイトに接続できなかったため、このサインインはgetcadcraft.com/account/securityにも残っています。そこで削除できます。",
+  "desktop.reason.keystore": "このコンピューターの資格情報ストアがサインインを拒否しました。",
+  "desktop.carry.title": "CadCraft Studioをセットアップしています",
+  "desktop.carry.text": "以前にインストールした個別のアプリから、設定、最近使ったファイル、復元用コピーを引き継いでいます。"
+}

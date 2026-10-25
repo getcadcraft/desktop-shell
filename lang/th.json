@@ -1,0 +1,33 @@
+{
+  "@locale": "th",
+  "@name": "ไทย",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "เข้าสู่ระบบ getcadcraft.com",
+  "desktop.account.signed_out.text": "การเข้าสู่ระบบช่วยให้แอปนี้เปิดและบันทึกแบบบนคลาวด์ของคุณได้ คุณจะได้รหัสสั้น ๆ ที่นี่ และอนุมัติบนเว็บไซต์ในเบราว์เซอร์ของคุณเอง ไม่มีการพิมพ์หรือคัดลอกข้อมูลลับใด ๆ",
+  "desktop.account.get_code": "รับรหัส",
+  "desktop.account.not_now": "ไว้ทีหลัง",
+  "desktop.account.waiting.title": "อนุมัติรหัสนี้บนเว็บไซต์",
+  "desktop.account.waiting.text": "เบราว์เซอร์ของคุณเปิด getcadcraft.com/device แล้ว ตรวจว่าแสดงรหัสนี้ แล้วอนุมัติ",
+  "desktop.account.waiting.own": "อนุมัติเฉพาะรหัสที่แสดงในแอปของคุณเองนี้เท่านั้น",
+  "desktop.account.waiting.left": {
+    "=1": "รหัสนี้ใช้ได้อีก 1 นาที",
+    "other": "รหัสนี้ใช้ได้อีก {n} นาที"
+  },
+  "desktop.account.waiting.out": "รหัสหมดอายุแล้ว",
+  "desktop.account.open_device": "เปิด getcadcraft.com/device",
+  "desktop.account.cancel": "ยกเลิก",
+  "desktop.account.signed_in.title": "เข้าสู่ระบบแล้ว",
+  "desktop.account.signed_in.who": "เข้าสู่ระบบแล้ว",
+  "desktop.account.signed_in.text": "คอมพิวเตอร์เครื่องนี้จะเข้าสู่ระบบค้างไว้จนกว่าคุณจะออกจากระบบที่นี่ หรือนำออกที่ getcadcraft.com ภายใต้ บัญชี และความปลอดภัย",
+  "desktop.account.sign_out": "ออกจากระบบ",
+  "desktop.account.done": "เสร็จ",
+  "desktop.account.only_desktop": "หน้าต่างนี้ทำงานได้เฉพาะภายในแอปเดสก์ท็อป CadCraft",
+  "desktop.reason.throttled": "ขอรหัสถี่เกินไปในเวลาสั้น ๆ ลองอีกครั้งในไม่กี่นาที",
+  "desktop.reason.expired": "รหัสหมดอายุก่อนได้รับการอนุมัติ ขอรหัสใหม่",
+  "desktop.reason.denied": "การเข้าสู่ระบบถูกปฏิเสธบนเว็บไซต์",
+  "desktop.reason.revoked": "คอมพิวเตอร์นี้ถูกออกจากระบบบน getcadcraft.com เข้าสู่ระบบอีกครั้งเพื่อใช้แบบบนคลาวด์ของคุณ ไม่มีอะไรบนคอมพิวเตอร์นี้หาย",
+  "desktop.reason.offline_signout": "ออกจากระบบบนคอมพิวเตอร์นี้แล้ว เข้าถึงเว็บไซต์ไม่ได้: การเข้าสู่ระบบนี้ยังปรากฏที่ getcadcraft.com/account/security ซึ่งคุณนำออกได้",
+  "desktop.reason.keystore": "ที่เก็บข้อมูลรับรองของคอมพิวเตอร์เครื่องนี้ปฏิเสธการเข้าสู่ระบบ",
+  "desktop.carry.title": "กำลังตั้งค่า CadCraft Studio",
+  "desktop.carry.text": "กำลังนำการตั้งค่า ไฟล์ล่าสุด และสำเนากู้คืนจากแอปแยกที่ติดตั้งไว้ก่อนหน้ามาไว้ใน Studio"
+}

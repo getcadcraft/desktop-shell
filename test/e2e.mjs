@@ -464,6 +464,14 @@ try {
     await new Promise((res) => setTimeout(res, 1000)); if (w) w.close(); return r;`)).r;
   ok(blank, 'window.open(\'\') opens a window (about:blank; the panels window opens that way)');
   ok(await onlyMain(), 'and it closes as a window too', JSON.stringify(await nativeWins()));
+  // A hand-off between apps opens a real page of ours (BimCraft's Takeoff → TakeoffCraft, ?handoff=<id>): the pop-up is
+  // built on about:blank and the engine loads the page into it (built on the page itself, Studio 0.6 closed on Windows).
+  const page = (await s.run(`const u = location.pathname + '?handoff=00000000-0000-4000-8000-000000000000';
+    const w = window.open(u, '_blank'); if (!w) return null;
+    let at = ''; for (let i = 0; i < 50 && !/handoff=/.test(at); i++) { await new Promise((r) => setTimeout(r, 200)); try { at = w.location.search; } catch { at = 'cross'; } }
+    w.close(); return at;`)).r;
+  ok(/handoff=0{8}-/.test(page || ''), 'window.open of one of our pages opens it, query kept', JSON.stringify(page));
+  ok(await onlyMain(), 'and it closes as a window too', JSON.stringify(await nativeWins()));
   const movable = (await s.run(`return !!(window.ccShellPanels && window.ccShellPanels.panels().length);`)).r;
   if (!movable) ok(false, 'the edition has movable panels (DR.5 docking checks)');
   else {
