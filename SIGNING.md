@@ -161,8 +161,8 @@ When the profile is ready, `sign-azure.sh` stops getting 403 from `eus.codesigni
 
 For the owner's own Mac checks before the Apple Developer account exists. Don't publish a test build. The released
 CadCraft Studio 0.5 for macOS is also unsigned and not notarized (signing for every platform comes in 0.6), built on the
-owner's Mac from the released suite; its release text says so. Gatekeeper asks on first open (right-click the app › Open;
-on macOS 15 and later System Settings › Privacy & Security › Open Anyway; or `xattr -cr "/Applications/CadCraft Studio.app"`).
+owner's Mac from the released suite; its release text says so. Gatekeeper asks on first open (macOS 15 and later: double-click once, then
+System Settings › Privacy & Security › Open Anyway; right-click › Open works only on macOS 13 and 14; or `xattr -cr "/Applications/CadCraft Studio.app"`).
 
 1. The repo `getcadcraft/desktop-shell` exists on GitHub with this tree on `main` (Actions enabled).
 2. Pack the dev suite: `CADCRAFT_SITE=<site> node <studio>/pack/suite.mjs --zip` → `studio/out/cadcraft-studio-browser-vdev.zip`;

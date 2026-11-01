@@ -513,6 +513,17 @@
 
   if (mobile) return;
 
+  // Links that leave Studio open in the person's browser on computers too (owner 2026-11-01: the What's new links did
+  // nothing on macOS, where a target=_blank click depends on WKWebView handing the shell a new-window request). The page
+  // asks the shell directly; on_new_window / on_navigation in lib.rs stay as the fallback. window.open of our own pages
+  // (the panels window) still goes through.
+  {
+    const hook = linksOut(true);
+    const install = () => { if (document.__ccLinksOut) return; document.__ccLinksOut = true; hook(document); };
+    install();
+    document.addEventListener('DOMContentLoaded', install);
+  }
+
   // Full screen (the app bar's screen modes, site assets/js/app-shell.js). Windows and Linux: element fullscreen fills
   // only the web view, so the window follows it. macOS (flags.nativeFullscreen; GH.1, desktop-shell#1): WKWebView's
   // element fullscreen already puts the page in a full-screen window of WebKit's own, and taking the app's window full
@@ -832,18 +843,20 @@
   }
 
   /** Links that leave Studio open in the person's browser — from a view too, which would otherwise navigate itself away.
-   *  No pop-up windows on a tablet: window.open of our own pages gives null (the apps keep their panels docked). */
-  function linksOut() {
+   *  No pop-up windows on a tablet: window.open of our own pages gives null (the apps keep their panels docked).
+   *  `desktop`: the same for computers, but window.open of our own pages still opens (the shell makes it a window). */
+  function linksOut(desktop = false) {
     const outside = (href) => {
       try {
         const u = new URL(String(href), location.href);
         return u.origin !== location.origin && /^(https?|mailto):$/.test(u.protocol) ? u.href : null;
       } catch { return null; }
     };
-    window.open = function (url) {
+    const open = window.open;
+    window.open = function (url, ...rest) {
       const out = outside(url);
-      if (out) T.invoke('cc_open_url', { url: out }).catch(() => {});
-      return null;
+      if (out) { T.invoke('cc_open_url', { url: out }).catch(() => {}); return null; }
+      return desktop ? open.call(window, url, ...rest) : null;
     };
     return (d) => d.addEventListener('click', (e) => {
       if (e.defaultPrevented) return;

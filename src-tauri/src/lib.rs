@@ -258,7 +258,6 @@ pub fn run() {
             cc_is_fullscreen,
             cc_account_window,
             cc_close_window,
-            #[cfg(mobile)]
             cc_open_url,
             cc_test_windows,
             account::cc_account_status,
@@ -833,9 +832,8 @@ fn cc_close_window(window: tauri::WebviewWindow) {
     }
 }
 
-/// Tablets: a link that leaves Studio (bridge.js catches it, from a view too), opened in the person's browser. Only
-/// http(s) and mailto, never Studio's own pages.
-#[cfg(mobile)]
+/// A link that leaves Studio (bridge.js catches it: on tablets from a view too; on computers since 2026-11-01, when
+/// macOS's What's new links did nothing), opened in the person's browser. Only http(s) and mailto, never Studio's own pages.
 #[tauri::command]
 fn cc_open_url(app: AppHandle, url: String) -> Result<(), String> {
     let u = tauri::Url::parse(&url).map_err(|_| "error: not a link".to_string())?;

@@ -61,15 +61,18 @@ const invoke = async (cmd, args, opts) => {
     case 'cc_machine_key_has': return args.id === 'ender-3';
     case 'cc_printers_list': return { accepts: 'pdf', printers: [{ name: 'Office', default: true, papers: ['A4'] }] };
     case 'cc_print': return 'request id 7 (1 file)';
+    case 'cc_open_url': return null;
     default: throw `unknown command ${cmd}`;
   }
 };
 
 const listeners = {};
-const window = { __TAURI_INTERNALS__: { invoke } };
+const opened = [];
+const window = { __TAURI_INTERNALS__: { invoke }, open: (u) => { opened.push(u); return { opened: u }; } };
 window.top = window;
 const document = { addEventListener: (t, f) => { listeners[t] = f; }, fullscreenElement: null };
-const ctx = vm.createContext({ window, document, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder });
+const location = { href: 'cadcraft://localhost/index.html', origin: 'cadcraft://localhost' };   // macOS's origin for our pages
+const ctx = vm.createContext({ window, document, location, URL, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder });
 vm.runInContext(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8'), ctx);
 const d = window.cadcraftDesktop;
 
@@ -89,6 +92,20 @@ ok(d && d.version === 1 && Object.isFrozen(d), 'window.cadcraftDesktop v1, froze
 ok(typeof d.openFolderDialog === 'function' && typeof d.listDir === 'function', 'folder bridge present (W2.15)');
 vm.runInContext(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8'), ctx);
 ok(window.cadcraftDesktop === d, 'running twice keeps the first bridge');
+
+{
+  // Links out on computers (owner 2026-11-01: What's new links did nothing on macOS): the page asks the shell.
+  const n = () => calls.filter((c) => c.cmd === 'cc_open_url').length;
+  const a = (href, extra = {}) => ({ getAttribute: (k) => (k === 'href' ? href : null), hasAttribute: (k) => k in extra });
+  const click = (el) => { let prevented = false; listeners.click({ defaultPrevented: false, target: { closest: () => el }, preventDefault: () => { prevented = true; } }); return prevented; };
+  const before = n();
+  ok(typeof listeners.click === 'function' && click(a('https://getcadcraft.com/news/studio-08')) && calls.filter((c) => c.cmd === 'cc_open_url').pop().args.url === 'https://getcadcraft.com/news/studio-08',
+     'a link out (What\'s new) → cc_open_url, the click is stopped');
+  ok(!click(a('apps/cadcraft/index.html')) && !click(a('cadcraft://localhost/x.html')) && !click(a('javascript:alert(1)')) && !click(a('https://x.example/f.zip', { download: '' })) && n() === before + 1,
+     'our own pages, javascript: and downloads are left alone');
+  ok(window.open('https://getcadcraft.com/tutorials') === null && n() === before + 2, 'window.open of a link out → the browser, no window');
+  ok(window.open('about:blank', 'panels', 'width=400')?.opened === 'about:blank' && opened.length === 1, 'window.open of our own pages still opens (the panels window)');
+}
 
 const bytes = await d.readFile('/home/me/a.dwg');
 ok(bytes instanceof Uint8Array && bytes.length === 3, 'readFile → Uint8Array');

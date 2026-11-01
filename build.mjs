@@ -736,7 +736,7 @@ for (const slug of slugs) {
     config.bundle.macOS = {
       minimumSystemVersion: '13.3',   // SU.1061: the suite's regex lookbehind needs Safari 16.4's WebKit = macOS 13.3 (studio/tools/browser-floor.mjs)
       // No Developer ID (test builds): sign ad hoc ("-"), so the bundle's signature is whole — Apple silicon refuses to run
-      // an unsigned or broken one. Gatekeeper still asks (right-click › Open the first time); never publish such a build.
+      // an unsigned or broken one. Gatekeeper still asks (Privacy & Security › Open Anyway the first time); never publish such a build.
       ...(process.env.APPLE_SIGNING_IDENTITY ? {} : { signingIdentity: '-' }),
       ...(suite ? { infoPlist: rel2(path.join(HERE, 'macos/Studio.Info.plist')) } : {}),
       // Mac App Store (S.6): sandboxed, files through the open/save panels, network client + server (Studio Live).
