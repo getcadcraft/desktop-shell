@@ -46,5 +46,30 @@ ok(checkFolder(dir, { exe: 'CadCraft Studio' }).some((p) => /data\/ is in the zi
 fs.rmSync(path.join(dir, 'webview2'), { recursive: true });
 ok(checkFolder(dir, { exe: 'CadCraft Studio' }).some((p) => /webview2/.test(p)), 'the runtime is required');
 
+// CE.10 (0.8): nothing in the shell may write to the PC's profile behind a portable copy's back. The only places that may name a
+// per-user folder are portable.rs (data_file falls back to it for an install), the window-state plugin's first-start probe in
+// lib.rs (skipped when portable) and carry.rs (SD.8's one-time copy, switched off when portable). Everything else goes through
+// portable::data_file / webview_dir. A new use fails here until it is looked at.
+const SRC = path.join(HERE, 'src-tauri/src');
+const PROFILE = /\b(app_data_dir|app_config_dir|app_local_data_dir|app_cache_dir|app_log_dir|data_local_dir|config_dir|cache_dir|home_dir)\b/;
+const ALLOWED = new Set(['portable.rs', 'lib.rs', 'carry.rs']);
+const hits = [];
+(function walk(d) {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const f = path.join(d, e.name);
+    if (e.isDirectory()) walk(f);
+    else if (e.name.endsWith('.rs') && !ALLOWED.has(e.name)) {
+      fs.readFileSync(f, 'utf8').split('\n').forEach((l, i) => { if (!l.trim().startsWith('//') && PROFILE.test(l)) hits.push(`${e.name}:${i + 1}`); });
+    }
+  }
+})(SRC);
+eq(hits, [], 'no module outside portable/lib/carry names a per-user folder');
+const lib = fs.readFileSync(path.join(SRC, 'lib.rs'), 'utf8');
+ok(/if portable::is_portable\(\) \{\s*builder\s*\} else \{\s*builder\.plugin\(tauri_plugin_window_state/.test(lib), 'the window-state plugin (writes to the profile) is off when portable');
+ok(/carry::Carry::new\(app, suite && !portable::is_portable\(\)\)/.test(lib), 'the 0.4 carry-over is off when portable');
+ok(/!portable::is_portable\(\) && matches!\(e, tauri::WindowEvent::Moved/.test(lib), 'the debounced place save is off when portable');
+const pr = fs.readFileSync(path.join(SRC, 'portable.rs'), 'utf8');
+ok(/APPIMAGE_MARKER: &str = "portable"/.test(pr) && /APPIMAGE_DATA: &str = "cadcraft-data"/.test(pr), 'Linux AppImage marker and data folder names');
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`portable: ${pass} passed, 0 failed`);

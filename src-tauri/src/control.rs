@@ -9,7 +9,11 @@
 //! request (32 random bytes, base64url; made at start and by newToken(); compared in constant time; never in a URL) else
 //! 401 + WWW-Authenticate · Host other than 127.0.0.1:<port> / localhost:<port> → 403 · any Origin header → 403 ·
 //! POST /mcp (JSON answers, no SSE): `initialize` issues Mcp-Session-Id (32 hex); later requests need it (missing 400,
-//! unknown 404); a notification or response → 202; GET → 405; DELETE with the session → 204 · POST /control (same token,
+//! unknown 404); a notification or response → 202; GET → 405; DELETE with the session → 204 (0.8: a request whose
+//! `params._meta` carries `io.modelcontextprotocol/protocolVersion` is MCP 2026-07-28 and needs no session: the headers
+//! MCP-Protocol-Version / Mcp-Method / Mcp-Name must equal the body, else 400 with -32020; protocol errors answer 400; see
+//! `modern_check` and docs/AI-CONNECT-SPEC.md § 0, § 1.4; the address and token are also written to `connect.json`, a file only
+//! the person can read, for `cadcraft-mcp connect`) · POST /control (same token,
 //! optional X-CadCraft-Session) · JSON only (415), ≤ 4 MB (413), query strings 400 · anything else 404. An answer with
 //! error code -32002 (the person pressed Disconnect) ends the session.
 
@@ -70,6 +74,142 @@ pub fn token_matches(given: &str, token: &str) -> bool {
 
 struct Session {
     last: Instant,
+}
+
+const META_V: &str = "io.modelcontextprotocol/protocolVersion";
+const META_I: &str = "io.modelcontextprotocol/clientInfo";
+
+/// Standard base64 decoding (the `=?base64?…?=` form of Mcp-Name / Mcp-Method headers); None when it is not valid base64 or UTF-8.
+fn unb64(s: &str) -> Option<String> {
+    let val = |c: u8| -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a') as u32 + 26),
+            b'0'..=b'9' => Some((c - b'0') as u32 + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|c| *c != b'=').collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let mut n = 0u32;
+        for (i, c) in chunk.iter().enumerate() {
+            n |= val(*c)? << (18 - 6 * i as u32);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// A header value as the body would say it: the `=?base64?…?=` form is decoded, anything else is taken as it is.
+fn header_value(h: &str) -> String {
+    match h.strip_prefix("=?base64?").and_then(|r| r.strip_suffix("?=")) {
+        Some(b) => unb64(b).unwrap_or_default(),
+        None => h.to_string(),
+    }
+}
+
+/// MCP 2026-07-28 (docs/AI-CONNECT-SPEC.md § 0): a request whose `params._meta` has the protocol version is stateless. Ok(None) = a
+/// legacy request (no session logic changes); Ok(Some(name)) = a stateless request from the client `name` (clientInfo, else
+/// "unknown"); Err(body) = HTTP 400 with code -32020 because a header differs from the body or is missing.
+fn modern_check(msg: &Value, hdr: &dyn Fn(&str) -> Option<String>) -> Result<Option<String>, Value> {
+    let id = msg.get("id").cloned().unwrap_or(Value::Null);
+    let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let Some(meta) = msg.get("params").and_then(|p| p.get("_meta")).filter(|m| m.is_object()) else {
+        return Ok(None);
+    };
+    let Some(version) = meta.get(META_V) else {
+        return Ok(None);
+    };
+    if method == "initialize" {
+        return Ok(None);
+    }
+    let bad = |m: &str| rpc_err(&id, -32020, &format!("Header mismatch: {m}"));
+    if hdr("MCP-Protocol-Version").as_deref() != version.as_str() {
+        return Err(bad("MCP-Protocol-Version must equal the protocol version in _meta."));
+    }
+    if !method.is_empty() && hdr("Mcp-Method").map(|h| header_value(&h)).as_deref() != Some(method) {
+        return Err(bad("Mcp-Method must equal the method."));
+    }
+    let named = match method {
+        "tools/call" | "prompts/get" => msg.get("params").and_then(|p| p.get("name")).and_then(|n| n.as_str()),
+        "resources/read" => msg.get("params").and_then(|p| p.get("uri")).and_then(|n| n.as_str()),
+        _ => None,
+    };
+    if method.is_empty() || !["tools/call", "prompts/get", "resources/read"].contains(&method) {
+        // no name to compare
+    } else if hdr("Mcp-Name").map(|h| header_value(&h)).as_deref() != named {
+        return Err(bad("Mcp-Name must equal the name in the request."));
+    }
+    let name = meta
+        .get(META_I)
+        .and_then(|c| c.get("name"))
+        .and_then(|n| n.as_str())
+        .map(|n| n.chars().take(100).collect::<String>())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+    Ok(Some(name))
+}
+
+/// Where `cadcraft-mcp connect` finds the hub's address and token (tools/mcp/bridge.mjs `connectFile` is the same rule).
+pub fn connect_file() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if let Some(p) = std::env::var_os("CADCRAFT_CONNECT_FILE") {
+        return Some(PathBuf::from(p));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("CadCraft Studio").join("connect.json"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support").join("CadCraft Studio").join("connect.json"));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+        base.map(|b| b.join("cadcraft-studio").join("connect.json"))
+    }
+}
+
+/// Write {url, token, pid, startedAt} for the bridge: readable by this user only (0600 on Unix; under the user's own
+/// %APPDATA% on Windows, which only that user and administrators can read). Best effort: a failure is not Studio's failure.
+fn write_connect(url: &str, token: &str) {
+    let Some(path) = connect_file() else { return };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let text = json!({ "url": url, "token": token, "pid": std::process::id(), "startedAt": started }).to_string();
+    let tmp = path.with_extension("json.tmp");
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)
+    };
+    #[cfg(not(unix))]
+    let file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(&tmp);
+    if let Ok(mut f) = file {
+        use std::io::Write;
+        if f.write_all(text.as_bytes()).is_ok() {
+            drop(f);
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+fn clear_connect() {
+    if let Some(p) = connect_file() {
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 struct Running {
@@ -194,7 +334,18 @@ fn handle(forward: &dyn Fn(&Value, &str) -> Result<Option<Value>, ()>, run: &Run
         return reply(req, 400, Some(&rpc_err(&null, -32600, "Invalid request")), &[]);
     }
     let id = msg.get("id").cloned().unwrap_or(Value::Null);
-    let session = if mcp {
+    // 2026-07-28: stateless requests (version and capabilities in params._meta) need no session
+    let modern = if mcp {
+        match modern_check(&msg, &|n| header(&req, n)) {
+            Ok(m) => m,
+            Err(body) => return reply(req, 400, Some(&body), &[]),
+        }
+    } else {
+        None
+    };
+    let session = if let Some(name) = &modern {
+        format!("client:{name}")
+    } else if mcp {
         if msg.get("method").and_then(|m| m.as_str()) == Some("initialize") {
             let mut ss = run.sessions.lock().unwrap();
             if ss.len() >= MAX_SESSIONS {
@@ -234,12 +385,14 @@ fn handle(forward: &dyn Fn(&Value, &str) -> Result<Option<Value>, ()>, run: &Run
     if (mcp && is_init && err_code.is_some()) || err_code == Some(-32002) {
         run.sessions.lock().unwrap().remove(&session);
     }
-    let hdr: Vec<(&str, String)> = if mcp { vec![("Mcp-Session-Id", session.clone())] } else { vec![] };
+    let hdr: Vec<(&str, String)> = if mcp && modern.is_none() { vec![("Mcp-Session-Id", session.clone())] } else { vec![] };
     if msg.get("id").is_none() || msg.get("method").is_none() {
         return reply(req, 202, None, &hdr);
     }
     let out = answer.unwrap_or_else(|| rpc_err(&id, -32603, "No answer"));
-    reply(req, 200, Some(&out), &hdr)
+    // protocol errors of a stateless request are HTTP 400 (invalid params, unsupported version, missing capability, header mismatch)
+    let status = if modern.is_some() && matches!(err_code, Some(-32602) | Some(-32020) | Some(-32021) | Some(-32022)) { 400 } else { 200 };
+    reply(req, status, Some(&out), &hdr)
 }
 
 fn info(run: &Running) -> Value {
@@ -282,6 +435,7 @@ pub fn cc_control_start<R: Runtime>(
         }
     });
     let out = info(&run);
+    write_connect(out["url"].as_str().unwrap_or_default(), out["token"].as_str().unwrap_or_default());
     *slot = Some(run);
     Ok(out)
 }
@@ -292,6 +446,7 @@ pub fn cc_control_stop<R: Runtime>(window: WebviewWindow<R>, suite: State<'_, cr
     if let Some(r) = ctl.running.lock().unwrap().take() {
         r.server.unblock();
         r.sessions.lock().unwrap().clear();
+        clear_connect();
     }
     Ok(())
 }
@@ -311,6 +466,7 @@ pub fn cc_control_new_token<R: Runtime>(window: WebviewWindow<R>, suite: State<'
     if let Some(r) = ctl.running.lock().unwrap().as_ref() {
         *r.token.lock().unwrap() = t.clone();
         r.sessions.lock().unwrap().clear();
+        write_connect(&format!("http://127.0.0.1:{}/mcp", r.port), &t);
     }
     Ok(t)
 }
@@ -337,6 +493,56 @@ pub fn cc_control_reply<R: Runtime>(window: WebviewWindow<R>, ctl: State<'_, Con
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn meta(version: &str) -> Value {
+        json!({ META_V: version, "io.modelcontextprotocol/clientCapabilities": {}, META_I: { "name": "evalclient", "version": "1" } })
+    }
+    fn hdrs<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |n: &str| pairs.iter().find(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn base64_headers() {
+        assert_eq!(unb64("SGVsbG8sIOS4lueVjA==").as_deref(), Some("Hello, 世界"));
+        assert_eq!(header_value("=?base64?SGVsbG8sIOS4lueVjA==?="), "Hello, 世界");
+        assert_eq!(header_value("cad_command_run"), "cad_command_run");
+        assert_eq!(unb64("!!!"), None);
+    }
+
+    #[test]
+    fn stateless_requests() {
+        let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "cad_hello", "arguments": {}, "_meta": meta("2026-07-28") } });
+        let ok = [("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/call"), ("Mcp-Name", "cad_hello")];
+        assert_eq!(modern_check(&call, &hdrs(&ok)).unwrap().as_deref(), Some("evalclient"));
+        // a legacy request (no _meta, or an initialize) is not touched
+        let legacy = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+        assert_eq!(modern_check(&legacy, &hdrs(&[])).unwrap(), None);
+        let init = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-11-25", "_meta": meta("2026-07-28") } });
+        assert_eq!(modern_check(&init, &hdrs(&[])).unwrap(), None);
+        // each header that differs is -32020
+        for wrong in [
+            [("MCP-Protocol-Version", "2025-11-25"), ("Mcp-Method", "tools/call"), ("Mcp-Name", "cad_hello")],
+            [("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/list"), ("Mcp-Name", "cad_hello")],
+            [("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/call"), ("Mcp-Name", "other")],
+        ] {
+            let e = modern_check(&call, &hdrs(&wrong)).unwrap_err();
+            assert_eq!(e["error"]["code"], -32020);
+        }
+        assert!(modern_check(&call, &hdrs(&[("Mcp-Method", "tools/call"), ("Mcp-Name", "cad_hello")])).is_err(), "a missing version header");
+        // tools/list needs no Mcp-Name; a base64 Mcp-Name is decoded
+        let list = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": { "_meta": meta("2026-07-28") } });
+        assert!(modern_check(&list, &hdrs(&[("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/list")])).is_ok());
+        let unicode = json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "Hello, 世界", "_meta": meta("2026-07-28") } });
+        assert!(modern_check(&unicode, &hdrs(&[("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/call"), ("Mcp-Name", "=?base64?SGVsbG8sIOS4lueVjA==?=")])).is_ok());
+    }
+
+    #[test]
+    fn connect_file_override() {
+        // only checked when the variable is set by the caller; the rule itself is tools/mcp/bridge.mjs connectFile
+        if let Some(p) = std::env::var_os("CADCRAFT_CONNECT_FILE") {
+            assert_eq!(connect_file(), Some(std::path::PathBuf::from(p)));
+        }
+    }
 
     /// agents' own checker (docs/AGENTS-SPEC.md §6.2) against this server with a stand-in hub. Needs Node and the site
     /// (CADCRAFT_SITE = the site's folder, which has tools/mcp/test/check-server.mjs):

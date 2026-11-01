@@ -1,6 +1,6 @@
 # CadCraft Studio on iPad and iPhone — the routine (on a Mac)
 
-Track TB in getcadcraft.com's `docs/0.5-PART3.md` (TB.3); **Universal: one app for iPad and iPhone (owner, 2026-10-19: "universal is fine"; briefly iPad-only that day)**: `TARGETED_DEVICE_FAMILY "1,2"`; the iPhone layout has not been checked on a real iPhone yet (IPH.3 run sheet). Minimum iPadOS/iOS 15.0. Studio is the iPad and iPhone app: one install, the eight apps inside, the
+Track TB in getcadcraft.com's `docs/0.5-PART3.md` (TB.3); **Universal: one app for iPad and iPhone (owner, 2026-10-19: "universal is fine"; briefly iPad-only that day)**: `TARGETED_DEVICE_FAMILY "1,2"`; the iPhone layout has not been checked on a real iPhone yet (IPH.3 run sheet). Minimum iPadOS/iOS 16.4 (the apps need Safari 16.4's WebKit, measured: studio/tools/browser-floor.mjs). Studio is the iPad and iPhone app: one install, the eight apps inside, the
 same shell as the desktop and Android (Tauri 2). **Everything here was prepared on Linux and has not been built yet**: the
 first run on the Mac is the real check. Android builds on the CadCraft server (`build.mjs --target android`, see README).
 

@@ -14,8 +14,16 @@ mod account;
 #[cfg(desktop)]
 mod carry;
 #[cfg(desktop)]
+mod connect;
+#[cfg(desktop)]
 mod control;
+// Bring your own key (0.8 AC.11) and "Send to a machine" (0.8 EG.40): the web view can set/ask/forget a key, never read it back.
+#[cfg(desktop)]
+mod ask_keys;
+#[cfg(desktop)]
+mod machines;
 mod files;
+mod lock_ops;   // 0.8 SU.1058: create-only and remove for strict vault locks (used by files.rs)
 mod links;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -36,6 +44,15 @@ mod studio_live;
 // LAN render nodes (0.7 CU.7): finding and reaching other Studios' computers; bytes only (render_nodes.rs).
 #[cfg(all(feature = "live", desktop))]
 mod render_nodes;
+// The Scan button's network scanners (Super 0.1, Start from a scan): eSCL scanners found by mDNS, requests carried on the LAN (scanner.rs).
+#[cfg(all(feature = "live", desktop))]
+mod scanner;
+// Outside render programs and "Open in…" (0.8 RE.3/RE.5/RE.6/RE.7). Blender (GPL) is not in the shipped table: owner rule 43, see engines.rs.
+#[cfg(desktop)]
+mod engines;
+// A Modbus TCP socket on this computer for the Material flow add-on's PLC emulation (0.8 SU.858 step 5): plc.rs, std-only core tested alone.
+#[cfg(desktop)]
+mod plc;
 #[cfg(desktop)]
 mod updates;
 mod windows;
@@ -221,6 +238,8 @@ pub fn run() {
             files::cc_open_folder_dialog,
             files::cc_read_file,
             files::cc_write_file,
+            files::cc_create_file_exclusive,
+            files::cc_remove_file,
             files::cc_stat,
             files::cc_list_dir,
             files::cc_launch_files,
@@ -274,6 +293,78 @@ pub fn run() {
             control::cc_control_drop_session,
             #[cfg(desktop)]
             control::cc_control_reply,
+            #[cfg(desktop)]
+            connect::cc_connect_env,
+            #[cfg(desktop)]
+            connect::cc_connect_exists,
+            #[cfg(desktop)]
+            connect::cc_connect_read,
+            #[cfg(desktop)]
+            connect::cc_connect_write,
+            #[cfg(desktop)]
+            connect::cc_connect_rename,
+            #[cfg(desktop)]
+            connect::cc_connect_mkdirp,
+            #[cfg(desktop)]
+            connect::cc_connect_which,
+            #[cfg(desktop)]
+            connect::cc_connect_run,
+            #[cfg(desktop)]
+            engines::cc_engine_list,
+            #[cfg(desktop)]
+            engines::cc_engine_find,
+            #[cfg(desktop)]
+            engines::cc_engine_pick,
+            #[cfg(desktop)]
+            engines::cc_engine_forget,
+            #[cfg(desktop)]
+            engines::cc_engine_start,
+            #[cfg(desktop)]
+            engines::cc_engine_status,
+            #[cfg(desktop)]
+            engines::cc_engine_result,
+            #[cfg(desktop)]
+            engines::cc_engine_cancel,
+            #[cfg(desktop)]
+            engines::cc_engine_open_list,
+            #[cfg(desktop)]
+            engines::cc_engine_open,
+            #[cfg(desktop)]
+            engines::cc_engine_project,
+            #[cfg(desktop)]
+            engines::cc_engine_project_pick,
+            #[cfg(desktop)]
+            engines::cc_engine_send,
+            #[cfg(desktop)]
+            engines::cc_engine_addon_find,
+            #[cfg(desktop)]
+            engines::cc_engine_addon_pick,
+            #[cfg(desktop)]
+            engines::cc_engine_addon_start,
+            #[cfg(desktop)]
+            plc::cc_plc_start,
+            #[cfg(desktop)]
+            plc::cc_plc_poll,
+            #[cfg(desktop)]
+            plc::cc_plc_respond,
+            #[cfg(desktop)]
+            plc::cc_plc_stop,
+            #[cfg(desktop)]
+            ask_keys::cc_ask_key_set,
+            #[cfg(desktop)]
+            ask_keys::cc_ask_key_has,
+            #[cfg(desktop)]
+            ask_keys::cc_ask_key_delete,
+            #[cfg(desktop)]
+            ask_keys::cc_ask_call,
+            #[cfg(desktop)]
+            machines::cc_machine_request,
+            #[cfg(desktop)]
+            machines::cc_machine_key_set,
+            #[cfg(desktop)]
+            machines::cc_machine_key_has,
+            #[cfg(desktop)]
+            machines::cc_machine_key_forget,
             #[cfg(feature = "live")]
             studio_live::cc_live_open,
             #[cfg(feature = "live")]
@@ -316,6 +407,10 @@ pub fn run() {
             render_nodes::cc_render_send,
             #[cfg(all(feature = "live", desktop))]
             render_nodes::cc_render_close,
+            #[cfg(all(feature = "live", desktop))]
+            scanner::cc_scanners_browse,
+            #[cfg(all(feature = "live", desktop))]
+            scanner::cc_scanner_request,
         ])
         // A window's end also ends its Studio Live session (studio_live.rs).
         .on_window_event(|_w, _e| {
@@ -339,7 +434,13 @@ pub fn run() {
             app.manage(studio_live::StudioLive::new(cfg.suite, root.clone()));
             #[cfg(all(feature = "live", desktop))]
             app.manage(render_nodes::RenderNodes::new(cfg.suite));
+            #[cfg(all(feature = "live", desktop))]
+            app.manage(scanner::Scanners::default());
             app.manage(protocol::Site { root, headers });
+            #[cfg(desktop)]
+            app.manage(engines::Jobs::default());
+            #[cfg(desktop)]
+            app.manage(plc::Hub::default());
             #[cfg(desktop)]
             app.manage(control::Control::default());
             app.manage(files::Grants::load(portable::data_file(app.handle(), "grants.json")));
@@ -425,14 +526,22 @@ fn desktop_main_window<R: Runtime>(app: &AppHandle<R>, title: &str, suite: bool)
     if let Some(main) = app.get_webview_window("main") {
         let h = app.clone();
         main.on_window_event(move |e| {
-            if matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+            // A portable copy has no window-state plugin (places.json instead): saving through it would find no state.
+            if !portable::is_portable() && matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
                 let n = PLACE_CHANGES.fetch_add(1, Ordering::Relaxed) + 1;
                 let h = h.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(700));
                     if PLACE_CHANGES.load(Ordering::Relaxed) == n {
-                        use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-                        let _ = h.save_window_state(StateFlags::all());
+                        // On the main thread, like the plugin's own Moved/Resized handler: from this thread the plugin
+                        // holds its cache lock while it waits on the main thread for the window's size, and that thread
+                        // is waiting for the same lock — Studio hung on macOS (71.3, Galax65). VISIBLE is left out: a
+                        // hidden window must not come back hidden.
+                        let h2 = h.clone();
+                        let _ = h.run_on_main_thread(move || {
+                            use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+                            let _ = h2.save_window_state(StateFlags::all() & !StateFlags::VISIBLE);
+                        });
                     }
                 });
             }

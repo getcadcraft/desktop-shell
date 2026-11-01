@@ -82,6 +82,7 @@ ndk-context = "0.1"
 
 [features]
 default = ["live"]
+blender = []   # OFF in every shipped build (owner rule 43: Blender is GPL); see src/engines.rs
 live = ["dep:spake2", "dep:chacha20poly1305", "dep:hkdf", "dep:hmac", "dep:sha2", "dep:rand_core", "dep:tokio",
         "dep:tokio-tungstenite", "dep:futures-util", "dep:rmp-serde", "dep:rmpv", "dep:mdns-sd", "dep:if-addrs"]
 

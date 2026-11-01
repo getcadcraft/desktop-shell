@@ -27,9 +27,23 @@ pub fn detect_in(exe_dir: &Path) -> Option<PathBuf> {
     Some(exe_dir.join("data"))
 }
 
+/// Linux (0.8 CE.10): an AppImage is portable when a file named `portable` sits beside the AppImage file (the AppImage
+/// itself is read-only and mounted elsewhere, so `shell.json` can't carry the flag). Its data then lives in
+/// `cadcraft-data/` beside it. `APPIMAGE` names the file; without a marker the AppImage keeps its settings in the home
+/// folder like an install.
+pub fn detect_appimage(appimage: &Path) -> Option<PathBuf> {
+    let dir = appimage.parent()?;
+    dir.join(APPIMAGE_MARKER).is_file().then(|| dir.join(APPIMAGE_DATA))
+}
+
+pub const APPIMAGE_MARKER: &str = "portable";
+pub const APPIMAGE_DATA: &str = "cadcraft-data";
+
 /// Called first thing in `run()`.
 pub fn init() {
     let found = std::env::current_exe().ok().and_then(|e| e.parent().and_then(detect_in));
+    #[cfg(target_os = "linux")]
+    let found = found.or_else(|| std::env::var_os("APPIMAGE").and_then(|a| detect_appimage(Path::new(&a))));
     if let Some(d) = &found {
         let _ = std::fs::create_dir_all(d);
     }
@@ -85,5 +99,21 @@ mod tests {
         std::fs::write(d.join("shell.json"), b"not json").unwrap();
         assert_eq!(detect_in(&d), None, "unreadable");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_appimage_is_portable_only_with_the_marker_beside_it() {
+        let d = tmp("appimage");
+        let img = d.join("CadCraft-Studio-0.8-x86_64.AppImage");
+        assert_eq!(detect_appimage(&img), None, "no marker");
+        std::fs::create_dir(d.join("portable")).unwrap();
+        assert_eq!(detect_appimage(&img), None, "a folder named portable is not the marker");
+        std::fs::remove_dir(d.join("portable")).unwrap();
+        std::fs::write(d.join("portable"), b"").unwrap();
+        assert_eq!(detect_appimage(&img), Some(d.join("cadcraft-data")));
+        let other = tmp("appimage-other");
+        assert_eq!(detect_appimage(&other.join("x.AppImage")), None, "the marker must sit beside this AppImage");
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&other);
     }
 }

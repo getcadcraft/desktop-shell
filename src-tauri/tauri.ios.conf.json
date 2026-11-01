@@ -4,7 +4,7 @@
   "identifier": "com.getcadcraft.studio",
   "bundle": {
     "iOS": {
-      "minimumSystemVersion": "15.0",
+      "minimumSystemVersion": "16.4",
       "developmentTeam": "KXB5X8ZLX7"
     }
   }

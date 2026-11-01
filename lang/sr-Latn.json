@@ -1,0 +1,33 @@
+{
+  "@locale": "sr-Latn",
+  "desktop.account.title": "Prijavi se na getcadcraft.com",
+  "desktop.account.signed_out.text": "Prijava omogućava ovoj aplikaciji da otvara i čuva vaše crteže u oblaku. Ovde dobijate kratak kod i odobravate ga na veb-sajtu, u sopstvenom pregledaču. Ništa tajno se ne unosi niti kopira.",
+  "desktop.account.get_code": "Zatraži kod",
+  "desktop.account.not_now": "Ne sada",
+  "desktop.account.waiting.title": "Odobri ovaj kod na veb-sajtu",
+  "desktop.account.waiting.text": "Pregledač je otvorio getcadcraft.com/device. Proveri da li prikazuje ovaj kod, pa ga odobri.",
+  "desktop.account.waiting.own": "Odobri samo kod prikazan ovde, u sopstvenoj aplikaciji.",
+  "desktop.account.waiting.left": {
+    "=1": "Kod važi još 1 minut.",
+    "one": "Kod važi još {n} minut.",
+    "few": "Kod važi još {n} minuta.",
+    "other": "Kod važi još {n} minuta."
+  },
+  "desktop.account.waiting.out": "Kod je istekao.",
+  "desktop.account.open_device": "Otvori getcadcraft.com/device",
+  "desktop.account.cancel": "Otkaži",
+  "desktop.account.signed_in.title": "Prijavljeni ste",
+  "desktop.account.signed_in.who": "Prijavljeni ste.",
+  "desktop.account.signed_in.text": "Ovaj računar ostaje prijavljen dok se ovde ne odjavite ili ga ne uklonite na getcadcraft.com, pod Nalog, Bezbednost.",
+  "desktop.account.sign_out": "Odjavi se",
+  "desktop.account.done": "Gotovo",
+  "desktop.account.only_desktop": "Ovaj prozor radi samo unutar CadCraft desktop aplikacije.",
+  "desktop.reason.throttled": "Previše kodova u kratkom vremenu. Pokušajte ponovo za nekoliko minuta.",
+  "desktop.reason.expired": "Kod je istekao pre odobravanja. Zatražite novi.",
+  "desktop.reason.denied": "Prijava je odbijena na veb-sajtu.",
+  "desktop.reason.revoked": "Ovaj računar je odjavljen na getcadcraft.com. Prijavite se ponovo da biste koristili crteže u oblaku; ništa na ovom računaru nije izgubljeno.",
+  "desktop.reason.offline_signout": "Odjavljeni ste na ovom računaru. Veb-sajt nije bio dostupan: prijava je takođe navedena na getcadcraft.com/account/security, gde je možete ukloniti.",
+  "desktop.reason.keystore": "Skladište akreditiva ovog računara odbilo je prijavu.",
+  "desktop.carry.title": "Podešavanje CadCraft Studio",
+  "desktop.carry.text": "Prenose se podešavanja, nedavne datoteke i kopije za oporavak iz zasebnih aplikacija instaliranih ranije."
+}

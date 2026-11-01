@@ -40,6 +40,25 @@ const invoke = async (cmd, args, opts) => {
       out.set(head, 6); out.set(body, 6 + head.length);
       return out.buffer;
     }
+    case 'cc_machine_request': {
+      const head = new TextEncoder().encode(JSON.stringify({ 'content-type': 'application/json' }));
+      const body = new TextEncoder().encode(JSON.stringify({ n: args.length, url: opts.headers['x-cc-url'], machine: opts.headers['x-cc-machine'], headers: JSON.parse(opts.headers['x-cc-headers']) }));
+      const out = new Uint8Array(6 + head.length + body.length);
+      new DataView(out.buffer).setUint16(0, 201); new DataView(out.buffer).setUint32(2, head.length);
+      out.set(head, 6); out.set(body, 6 + head.length);
+      return out.buffer;
+    }
+    case 'cc_machine_key_set': case 'cc_machine_key_forget': return null;
+    case 'cc_plc_start': return { port: args.port || 5020 };
+    case 'cc_plc_poll': return [{ id: 3, bytes: [0, 1, 0, 0, 0, 6, 1, 1, 0, 0, 0, 1] }];
+    case 'cc_plc_respond': case 'cc_plc_stop': return null;
+    case 'cc_engine_list': return [{ id: 'unreal', name: 'Unreal Engine', kind: 'link', found: false }];
+    case 'cc_engine_open_list': return [{ id: 'usdview', found: false }, { id: 'system', found: true }];
+    case 'cc_engine_open': return '/home/me/Documents/CadCraft hand-off/scene';
+    case 'cc_ask_key_has': return args.name === 'anthropic-main';
+    case 'cc_ask_key_set': case 'cc_ask_key_delete': return null;
+    case 'cc_ask_call': return { status: 200, json: { echo: args }, error: null };
+    case 'cc_machine_key_has': return args.id === 'ender-3';
     case 'cc_printers_list': return { accepts: 'pdf', printers: [{ name: 'Office', default: true, papers: ['A4'] }] };
     case 'cc_print': return 'request id 7 (1 file)';
     default: throw `unknown command ${cmd}`;
@@ -97,6 +116,44 @@ ok((await d.account.status()).state === 'signed_out', 'account.status()');
 const cr = await d.cloud.request({ method: 'post', path: '/api/v1/sync/save?drawing=x&base=1', body: new Uint8Array([1, 2, 3]) });
 ok(cr.status === 200 && cr.headers['content-type'] === 'application/json' && cr.json().data.n === 3 && cr.json().data.method === 'POST',
   'cloud.request sends bytes and decodes status, headers and body');
+// 0.8 EG.40: the bridge's machines API (the shell fills in the key; the page only names the machine)
+{
+  const mr = await d.machines.request({ method: 'put', url: 'http://192.168.1.40/api/v1/files/usb/a.gcode', machine: 'ender-3', headers: { 'X-Api-Key': '{{key}}' }, body: new Uint8Array([1, 2, 3, 4]) });
+  const echo = JSON.parse(new TextDecoder().decode(mr.body));
+  ok(Object.isFrozen(d.machines) && mr.status === 201 && mr.headers['content-type'] === 'application/json' && echo.n === 4 && echo.machine === 'ender-3' && echo.headers['X-Api-Key'] === '{{key}}', 'machines.request sends the step and decodes status, headers, body (the key placeholder goes through untouched)');
+  ok(calls.filter((c) => c.cmd === 'cc_machine_request').pop().opts.headers['x-cc-method'] === 'PUT', 'the method is upper-cased');
+  ok((await d.machines.keyHas('ender-3')) === true && (await d.machines.keyHas('other-1')) === false && (await d.machines.keySet('ender-3', 'k')) === null, 'keySet / keyHas / keyForget reach the shell; there is no way to read a key back');
+  ok(!('keyGet' in d.machines) && !('key' in d.machines), 'no getter for keys');
+}
+// 0.8 RE.3/RE.6: outside programs (engines.rs). Blender is GPL and is not in the shipped table (rule 43), so the shell never lists it.
+{
+  ok(Object.isFrozen(d.engines) && typeof d.engines.start === 'function' && typeof d.engines.openList === 'function' && typeof d.engines.addonStart === 'function', 'engines API present and frozen');
+  const l = await d.engines.list();
+  ok(l.every((e) => e.id !== 'blender') && (await d.engines.openList()).every((e) => e.id !== 'blender'), 'no Blender row from the shell');
+  const folder = await d.engines.open('system', new Uint8Array([1, 2]), { kind: 'glb', name: 'house' });
+  const c = calls.filter((x) => x.cmd === 'cc_engine_open').pop();
+  ok(/hand-off/.test(folder) && JSON.parse(decodeURIComponent(c.opts.headers['x-cc-open'])).program === 'system' && JSON.parse(decodeURIComponent(c.opts.headers['x-cc-open'])).kind === 'glb', 'Open in… sends the program id and kind in a header, the package as the body');
+}
+// 0.8 SU.858 step 5: the PLC socket (plc.rs) — start / poll / respond / stop, frames as byte lists
+{
+  ok(Object.isFrozen(d.plc) && ['start', 'poll', 'respond', 'stop'].every((k) => typeof d.plc[k] === 'function'), 'plc API present and frozen');
+  ok((await d.plc.start('5020.7')).port === 5021, 'start takes a whole port number');
+  const f = await d.plc.poll();
+  ok(f.length === 1 && f[0].id === 3 && f[0].bytes.length === 12, 'poll hands over the waiting frames');
+  await d.plc.respond(3, new Uint8Array([0, 1, 0, 0, 0, 4, 1, 1, 1, 0]));
+  const r = calls.filter((x) => x.cmd === 'cc_plc_respond').pop();
+  ok(r.args.id === 3 && Array.isArray(r.args.bytes) && r.args.bytes.length === 10 && r.args.bytes.every((b) => b >= 0 && b < 256), 'respond sends the answer as bytes');
+  await d.plc.respond(4, null);
+  ok(calls.filter((x) => x.cmd === 'cc_plc_respond').pop().args.bytes === null, 'respond with null means no answer');
+}
+// 0.8 AC.11: bring your own key — set / has / delete, a call made natively, and no way to read a key back
+{
+  ok(Object.isFrozen(d.ask) && (await d.ask.keyHas('anthropic-main')) === true && (await d.ask.keyHas('x')) === false && (await d.ask.keySet('anthropic-main', 'sk-test-12345678')) === null && (await d.ask.keyDelete('anthropic-main')) === null, 'ask.keySet / keyHas / keyDelete reach the shell');
+  ok(!('keyGet' in d.ask) && !('get' in d.ask) && !('key' in d.ask), 'no getter for keys');
+  const r = await d.ask.call({ provider: 'anthropic', keyName: 'anthropic-main', path: '/v1/messages', headers: { 'anthropic-version': '2023-06-01' }, body: { model: 'm' } });
+  const sent = calls.filter((c) => c.cmd === 'cc_ask_call').pop().args;
+  ok(r.status === 200 && sent.keyName === 'anthropic-main' && sent.baseUrl === '' && sent.request.path === '/v1/messages' && sent.request.body.model === 'm', 'ask.call names the provider and the key, never carries one');
+}
 const cj = await d.cloud.request({ method: 'POST', path: '/api/v1/sync/projects', body: { workspace: 'w', name: 'n' } });
 ok(calls.filter((c) => c.cmd === 'cc_cloud_request').pop().opts.headers['x-cc-content-type'] === 'application/json' && cj.status === 200, 'an object body goes as JSON');
 let seen = null;
@@ -387,6 +444,37 @@ ok(calls.some((c) => c.cmd === 'cc_set_fullscreen' && c.args.on === true), 'full
   off();
   await N.stopAdvertising();
   ok(nodeSh.calls.some((c) => c.cmd === 'cc_render_unadvertise'), 'stopAdvertising reaches the shell');
+}
+
+// The Scan button's network scanners (Super 0.1, scanner.rs): browse() and request() over the shell's framed answer
+// [status u16][header length u32][headers JSON][body]; only where the live feature (mDNS) is in, never on tablets.
+{
+  console.log('cadcraftDesktop.scanners');
+  const seen = [];
+  const frame = (status, headers, body) => { const h = new TextEncoder().encode(JSON.stringify(headers)); const u = new Uint8Array(6 + h.length + body.length); const dv = new DataView(u.buffer); dv.setUint16(0, status); dv.setUint32(2, h.length); u.set(h, 6); u.set(body, 6 + h.length); return u.buffer; };
+  const inv = async (cmd, args) => {
+    seen.push({ cmd, args });
+    if (cmd === 'cc_scanners_browse') return [{ id: 'u-1', name: 'Office Copier', host: '192.168.1.9', port: 80, rs: 'eSCL', sources: 'platen,adf', colors: 'color,grayscale', formats: 'image/jpeg' }];
+    if (cmd === 'cc_scanner_request') return frame(201, { location: '/eSCL/ScanJobs/7', 'content-type': '' }, Uint8Array.of(1, 2, 3));
+    return invoke(cmd, args);
+  };
+  const mk = (flags) => {
+    const w = { __TAURI_INTERNALS__: { invoke: inv }, __ccShellFlags: flags };
+    w.top = w;
+    vm.runInContext(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8'),
+      vm.createContext({ window: w, document: { addEventListener() {} }, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder, Math, Number, setTimeout, setInterval, clearInterval, Promise }));
+    return w.cadcraftDesktop;
+  };
+  ok(!('scanners' in mk({ account: true, suite: true, live: false })), 'no scanners without the live feature (no mDNS code)');
+  ok(/mobile\) delete bridge\.scanners/.test(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8')), 'and none on tablets');
+  const S = mk({ account: true, suite: false, live: true }).scanners;
+  ok(S && Object.isFrozen(S) && typeof S.browse === 'function' && typeof S.request === 'function', 'every desktop app with the live feature has browse() and request()');
+  const l = await S.browse(99999);
+  ok(l.length === 1 && l[0].rs === 'eSCL' && seen.at(-1).args.args.ms === 8000, 'browse() lists what the shell found; the wait is capped at 8 s');
+  const r = await S.request('u-1', 'POST', '/eSCL/ScanJobs', '<x/>');
+  ok(r.status === 201 && r.headers.location === '/eSCL/ScanJobs/7' && r.body.length === 3 && r.body[2] === 3, 'request() unpacks status, headers and body');
+  const a = seen.at(-1).args.args;
+  ok(a.id === 'u-1' && a.method === 'POST' && a.path === '/eSCL/ScanJobs' && a.body === '<x/>', 'and passes the scanner id, never a host or URL');
 }
 
 // host.js on top of the bridge (skipped without the site: set CADCRAFT_SITE, or CADCRAFT_HOST_JS to any copy).

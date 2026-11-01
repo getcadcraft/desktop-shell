@@ -48,6 +48,8 @@
 //   --webview2-unchecked   build even when Microsoft's release list can't be reached (offline); never publish that build
 //   --version x.y.z   installer version + file name instead of the release's (e.g. 0.4.1 = the 0.4 apps, new installer)
 //   --no-live    leave Studio Live out of the shell (cargo --no-default-features), e.g. for 0.4.1
+//   --with-engines blender[,cantera]   (0.8 RE.3 / RE.4) opt in to outside-program engines: their cargo features, and their scripts from ./engines/<id>/
+//                (kept in step with the site by tools/render/engines/sync.mjs). Off in every build we ship; engines.rs knows nothing of Blender without it.
 //
 // Out: out/<Name>-<version>-setup.exe (+ <Name>-<version>.msi when built on Windows) + out/SHA256SUMS (real checksums).
 // On Linux: NSIS only, cross-compiled with cargo-xwin. On Windows (CI, .github/workflows/windows.yml): NSIS + MSI (WiX).
@@ -67,6 +69,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { checkRuntime, fetchFeed, runtimeVersion } from './webview2.mjs';
+import { planEngines } from './engines-build.mjs';
 import { addEntry as feedEntry } from './updater-feed.mjs';
 import { pack as msixPack, unpackCheck as msixUnpackCheck } from './msix/pack.mjs';
 import { appInstaller as msixAppInstaller } from './msix/appinstaller.mjs';
@@ -105,6 +108,10 @@ const WV2_UNCHECKED = flag('--webview2-unchecked');
 const VERSION = opt('--version', null);
 // --no-live: build the shell without Studio Live (cargo --no-default-features): 0.4.x point releases.
 const NO_LIVE = flag('--no-live');
+// --with-engines blender[,cantera]: the opt-in outside-program engines (0.8 RE.3 / RE.4, engines-build.mjs). None in any build we ship.
+const WITH_ENGINES = (opt('--with-engines', '') || '').split(',').map((x) => x.trim()).filter(Boolean);
+const ENGINE_PLAN = planEngines(WITH_ENGINES, { root: HERE });
+if (ENGINE_PLAN.problems.length) { for (const p of ENGINE_PLAN.problems) console.error(p); process.exit(1); }
 // Tablets (docs/0.5-PART3.md track TB): Studio only.
 const MOBILE = TARGET === 'android' || TARGET === 'ios';
 const RELEASE = flag('--release');
@@ -115,7 +122,7 @@ const SIM_DEVICE = opt('--sim-device', 'iPad Pro 13-inch (M4)');
 const SIDELOAD = flag('--apk');
 if (SIDELOAD && (TARGET !== 'android' || RELEASE)) { console.error('--apk: --target android, without --release (that is the store AAB)'); process.exit(1); }
 const ABI = opt('--abi', null);
-const featureArgs = NO_LIVE ? ['--', '--no-default-features'] : [];
+const featureArgs = NO_LIVE || ENGINE_PLAN.features.length ? ['--', ...(NO_LIVE ? ['--no-default-features'] : []), ...(ENGINE_PLAN.features.length ? ['--features', ENGINE_PLAN.features.join(',')] : [])] : [];
 if (VERSION && !/^\d+\.\d+\.\d+$/.test(VERSION)) { console.error('--version takes x.y.z'); process.exit(1); }
 if (WV2_FIXED) {
   const msedge = path.join(path.resolve(WV2_FIXED), 'msedgewebview2.exe');
@@ -698,6 +705,7 @@ for (const slug of slugs) {
         [rel2(path.join(stage, 'shell.json'))]: 'shell.json',
         [rel2(path.join(HERE, 'THIRD_PARTY.md'))]: 'THIRD_PARTY.md',
         [rel2(path.join(HERE, 'LICENSE'))]: 'LICENSE',
+        ...ENGINE_PLAN.resources,   // 0.8 RE.3 / RE.4: only with --with-engines
         ...(suiteApps.length ? { [rel2(path.join(stage, 'appicons')) + '/']: 'appicons/' } : {}),
         ...(WV2_FIXED ? {
           [`${WV2_DIR}/`]: `${WV2_DIR}/`,
@@ -726,7 +734,7 @@ for (const slug of slugs) {
     const assoc = (exts, rank) => exts.map((ext) => ({ ext: [ext], name: T[ext] || `${ext.toUpperCase()} file`, role: 'Editor', rank }));
     config.bundle.fileAssociations = [...assoc(f.own, 'Owner'), ...assoc(f.polite, 'Default'), ...assoc(f.openWith, 'Alternate')];
     config.bundle.macOS = {
-      minimumSystemVersion: '13.0',   // Catalog: planned macOS 13 Ventura or later
+      minimumSystemVersion: '13.3',   // SU.1061: the suite's regex lookbehind needs Safari 16.4's WebKit = macOS 13.3 (studio/tools/browser-floor.mjs)
       // No Developer ID (test builds): sign ad hoc ("-"), so the bundle's signature is whole — Apple silicon refuses to run
       // an unsigned or broken one. Gatekeeper still asks (right-click › Open the first time); never publish such a build.
       ...(process.env.APPLE_SIGNING_IDENTITY ? {} : { signingIdentity: '-' }),

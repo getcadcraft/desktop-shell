@@ -9,6 +9,8 @@
  *   saveDialog({defaultPath, filters, title})                   → path | null
  *   openFolderDialog({title})                                   → path | null          (W2.15, sheet sets)
  *   readFile(path) → Uint8Array            writeFile(path, Uint8Array) → undefined (atomic, done by the shell)
+ *   createFileExclusive(path, Uint8Array) → true when this call made the file, false when it existed (the OS decides);
+ *   removeFile(path) → true when a file was removed (0.8 SU.1058; tablets answer "unsupported")
  *   stat(path) → {size, mtime} | null      listDir(path) → [{name, dir}]  (folders first, then by name)
  *   launchFiles() → paths (each once)      onOpenFiles(cb(paths))          (double-click while running)
  *   info() → {shell, app, name, version, platform, windowId, suite, store, portable}   store: a store package (the store updates it); portable: the zip (no updater, data beside the program)
@@ -29,6 +31,9 @@
  *     invite links the system opened Studio with (LV.25), untouched; the fragment is the session key, never log it
  *   printers {list() → {accepts: 'pdf'|'png', printers: [{name, default, papers[]}]}, print(bytes, {printer, copies, paper, landscape, title})}
  *                 (0.7 D7.20, print.rs; computers only)
+ *   scanners {browse(ms) → [{id, name, host, port, rs, sources, colors, formats}], request(id, method, path, body) → {status, headers, body}}
+ *                 (Super 0.1 Scan button, scanner.rs: eSCL scanners found by mDNS `_uscan._tcp`, private addresses, paths under the
+ *                 scanner's eSCL root only; computers with the live feature)
  *   renderNodes (LAN render nodes, render_nodes.rs, 0.7 CU.7; Studio's app windows on computers; the shell finds nodes and
  *     carries bytes, the pages do the handshake): advertise(tag) → stopAdvertising() → onConnection(cb(transport)) →
  *     browse() → [{tag, name, host, port}] · onNodes(cb(list)) → unsubscribe · connect({host, port}) → transport
@@ -150,6 +155,20 @@
     const headers = JSON.parse(new TextDecoder().decode(u8.subarray(6, 6 + n)));
     const out = u8.slice(6 + n);
     return { status, headers, body: out, json: () => JSON.parse(new TextDecoder().decode(out)) };
+  };
+
+  // 0.8 EG.40 (studio_PART_2): a job to a printer / CNC / laser on the local network (machines.rs; studio/hub/machines.js has the
+  // drivers). The step is the driver's {method, url, headers, body, machine}; the key stays in the OS credential store.
+  const machineRequest = async (step = {}) => {
+    const body = step.body === undefined || step.body === null ? new Uint8Array(0) : step.body;
+    const raw = await call('cc_machine_request', wire(bytesOf(body)), { headers: {
+      'x-cc-method': String(step.method || 'GET').toUpperCase(), 'x-cc-url': String(step.url || ''), 'x-cc-machine': String(step.machine || ''),
+      'x-cc-headers': JSON.stringify(step.headers || {}),
+    } });
+    const u8 = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const n = dv.getUint32(2);
+    return { status: dv.getUint16(0), headers: JSON.parse(new TextDecoder().decode(u8.subarray(6, 6 + n))), body: u8.slice(6 + n) };
   };
 
   let listener = null;
@@ -319,6 +338,27 @@
     } catch { return null; }
   };
 
+  // Outside render programs, "Open in…", the Unreal link and add-on engines (engines.rs, 0.8 RE.3–RE.7; computers only). Blender (GPL) is not in the shipped
+  // table (owner rule 43), so it never appears in list() / openList().
+  const engines = Object.freeze({
+    list: () => call('cc_engine_list'),
+    find: (engine) => call('cc_engine_find', { engine: String(engine) }),
+    pick: (engine) => call('cc_engine_pick', { engine: String(engine) }),
+    forget: (engine) => call('cc_engine_forget', { engine: String(engine) }),
+    start: (engine, bytes, settings = {}) => call('cc_engine_start', wire(bytesOf(bytes)), { headers: { 'x-cc-engine': encodeURIComponent(JSON.stringify({ engine: String(engine), settings })) } }),
+    status: (job) => call('cc_engine_status', { job }),
+    result: async (job) => new Uint8Array(await call('cc_engine_result', { job })),
+    cancel: (job) => call('cc_engine_cancel', { job }),
+    openList: () => call('cc_engine_open_list'),
+    open: (program, bytes, { kind = 'usd', name = 'scene' } = {}) => call('cc_engine_open', wire(bytesOf(bytes)), { headers: { 'x-cc-open': encodeURIComponent(JSON.stringify({ program: String(program), kind: String(kind), name: String(name) })) } }),
+    project: () => call('cc_engine_project'),
+    pickProject: () => call('cc_engine_project_pick'),
+    send: (bytes, { name = 'scene' } = {}) => call('cc_engine_send', wire(bytesOf(bytes)), { headers: { 'x-cc-open': encodeURIComponent(JSON.stringify({ name: String(name) })) } }),
+    addonFind: (decl) => call('cc_engine_addon_find', {}, { headers: { 'x-cc-engine': encodeURIComponent(JSON.stringify(decl || {})) } }),
+    addonPick: (decl) => call('cc_engine_addon_pick', {}, { headers: { 'x-cc-engine': encodeURIComponent(JSON.stringify(decl || {})) } }),
+    addonStart: (decl, bytes, settings = {}) => call('cc_engine_addon_start', wire(bytesOf(bytes)), { headers: { 'x-cc-engine': encodeURIComponent(JSON.stringify({ ...(decl || {}), settings })) } }),
+  });
+
   const bridge = {
     version: 1,
     openDialog: (o = {}) => call('cc_open_dialog', { opts: { multiple: !!o.multiple, filters: o.filters || [], title: o.title || null } }),
@@ -331,6 +371,9 @@
     writeFile: async (path, data) => {
       await call('cc_write_file', wire(bytesOf(data)), { headers: { 'x-cc-path': encodeURIComponent(String(path)) } });
     },
+    // 0.8 SU.1058 (strict vault locks): true when THIS call made the file (the OS decides), false when it existed; removeFile → true when one was removed
+    createFileExclusive: async (path, data) => !!(await call('cc_create_file_exclusive', wire(bytesOf(data)), { headers: { 'x-cc-path': encodeURIComponent(String(path)) } })),
+    removeFile: async (path) => !!(await call('cc_remove_file', { path: String(path) })),
     stat: (path) => call('cc_stat', { path: String(path) }),
     listDir: (path) => call('cc_list_dir', { path: String(path) }),
     launchFiles: () => call('cc_launch_files'),
@@ -350,6 +393,26 @@
       onChange: (cb) => { accountListener = typeof cb === 'function' ? cb : null; },
     }),
     cloud: Object.freeze({ request: cloudRequest }),
+    machines: Object.freeze({
+      request: machineRequest,
+      keySet: (id, key) => call('cc_machine_key_set', { id: String(id), key: String(key) }),
+      keyHas: (id) => call('cc_machine_key_has', { id: String(id) }),
+      keyForget: (id) => call('cc_machine_key_forget', { id: String(id) }),
+    }),
+    // 0.8 AC.11 (bring your own key): the key goes in and never comes out; a provider call is made on the native side (ask_keys.rs).
+    ask: Object.freeze({
+      keySet: (name, secret) => call('cc_ask_key_set', { name: String(name), secret: String(secret) }),
+      keyHas: (name) => call('cc_ask_key_has', { name: String(name) }),
+      keyDelete: (name) => call('cc_ask_key_delete', { name: String(name) }),
+      call: (o = {}) => call('cc_ask_call', { provider: String(o.provider || ''), baseUrl: String(o.baseUrl || ''), keyName: String(o.keyName || ''), request: { path: String(o.path || ''), headers: o.headers && typeof o.headers === 'object' ? o.headers : {}, body: o.body === undefined ? null : o.body } }),
+    }),
+    // 0.8 SU.858 step 5 (plc.rs): a Modbus TCP socket on this computer for the Material flow add-on's PLC emulation. The page polls for frames and answers each one.
+    plc: Object.freeze({
+      start: (port) => call('cc_plc_start', { port: Math.round(Number(port) || 0) }),
+      poll: () => call('cc_plc_poll'),
+      respond: (id, bytes) => call('cc_plc_respond', { id: Number(id), bytes: bytes === null || bytes === undefined ? null : Array.from(bytes, (b) => b & 255) }),
+      stop: () => call('cc_plc_stop'),
+    }),
     links: Object.freeze({
       launch: () => call('cc_links_launch'),
       onOpen: (cb) => {
@@ -378,6 +441,16 @@
       dropSession: (id) => call('cc_control_drop_session', { id: String(id) }),
       onRequest: (cb) => { controlListener = typeof cb === 'function' ? cb : null; },
     }),
+    connect: Object.freeze({   // AC.2: Studio's Connect your AI; native side only touches the AI apps' own settings files (connect.rs)
+      env: () => call('cc_connect_env'),
+      exists: (path) => call('cc_connect_exists', { path: String(path) }),
+      read: (path) => call('cc_connect_read', { path: String(path) }),
+      write: (path, text) => call('cc_connect_write', { path: String(path), text: String(text) }),
+      rename: (from, to) => call('cc_connect_rename', { from: String(from), to: String(to) }),
+      mkdirp: (path) => call('cc_connect_mkdirp', { path: String(path) }),
+      which: (cmd) => call('cc_connect_which', { cmd: String(cmd) }),
+      run: (cmd, args = []) => call('cc_connect_run', { cmd: String(cmd), args: args.map(String) }),
+    }),
     live: Object.freeze({
       encrypts: false,
       transport: (kind, o = {}) => liveTransport(kind, o),
@@ -392,6 +465,7 @@
       signIn: liveSignIn,
     }),
     renderNodes,
+    engines,
     // Printing (0.7 D7.20, print.rs): the system's printers, and a plotted sheet sent to one. `accepts` says what to send:
     // 'pdf' (CUPS: Linux, macOS) or 'png' (Windows prints an image through .NET).
     printers: Object.freeze({
@@ -399,6 +473,20 @@
       print: (bytes, job = {}) => call('cc_print', wire(bytesOf(bytes)), { headers: { 'x-cc-print': encodeURIComponent(JSON.stringify({
         printer: String(job.printer || ''), copies: Math.max(1, Math.min(99, Math.round(Number(job.copies) || 1))), paper: String(job.paper || ''),
         landscape: !!job.landscape, title: String(job.title || '') })) } }),
+    }),
+    // The Scan button's network scanners (Super 0.1, scanner.rs): eSCL scanners on this network. browse() finds them; request()
+    // carries one eSCL request to a found one (the page's lib/scanstart/escl.js speaks the protocol) → { status, headers, body }.
+    scanners: Object.freeze({
+      browse: async (ms = 2500) => { const l = await call('cc_scanners_browse', { args: { ms: Math.max(200, Math.min(8000, Number(ms) || 2500)) } }); return Array.isArray(l) ? l : []; },
+      request: async (id, method, pth, body = null) => {
+        const r = await call('cc_scanner_request', { args: { id: String(id || ''), method: String(method || 'GET'), path: String(pth || ''), body: body == null ? null : String(body) } });
+        const b = r instanceof Uint8Array ? r : new Uint8Array(r);
+        if (b.length < 6) throw new Error('network: short answer');
+        const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), hl = dv.getUint32(2);
+        let headers = {};
+        try { headers = JSON.parse(new TextDecoder().decode(b.subarray(6, 6 + hl))); } catch { /* none */ }
+        return { status: dv.getUint16(0), headers, body: b.subarray(6 + hl) };
+      },
     }),
     updates: Object.freeze({
       status: () => call('cc_updates_status'),
@@ -417,6 +505,8 @@
   if (flags.account === false) { delete bridge.account; delete bridge.cloud; }
   if (flags.suite !== true) { delete bridge.windows; delete bridge.control; delete bridge.links; }
   if (flags.suite !== true || flags.live !== true || mobile) delete bridge.renderNodes;   // computers only (CU.7)
+  if (flags.live !== true || mobile) delete bridge.scanners;   // computers with the mDNS code (scanner.rs is cfg(all(feature = "live", desktop)))
+  if (mobile) delete bridge.engines;   // no outside programs on tablets (RE.3)
   if (flags.suite !== true || flags.live !== true) delete bridge.live;
   else if (flags.account === false && bridge.live) { const { signIn, ...rest } = bridge.live; bridge.live = Object.freeze(rest); }   // eslint-disable-line no-unused-vars
   Object.defineProperty(window, 'cadcraftDesktop', { value: Object.freeze(bridge), enumerable: true });

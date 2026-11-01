@@ -391,7 +391,7 @@ async fn check_feed<R: Runtime>(app: &AppHandle<R>, asked: bool, source: Source)
     up.remember("available", &update.version, &notes, asked);
     if source == Source::Notify {
         // The portable copy: tell, then open the download page (never a swap of this folder).
-        let text = format!("{name} {} is available (you have {current}).\n\nThis portable copy doesn't replace itself: download the new portable zip and move your data folder into it.", update.version);
+        let text = format!("{name} {} is available (you have {current}).\n\nThis portable copy doesn't replace itself: download the new portable copy and keep your data folder beside it.", update.version);
         if !ask(app, "Update available", text, "Open the download page").await {
             up.remember("declined", &update.version, &notes, asked);
             return Ok("declined".into());

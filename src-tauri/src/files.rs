@@ -482,11 +482,36 @@ pub async fn cc_write_file(grants: State<'_, Grants>, request: Request<'_>) -> R
     tauri::async_runtime::spawn_blocking(move || write_atomic(&p, &bytes)).await.map_err(|e| e.to_string())?
 }
 
+/// Strict vault locks (0.8 SU.1058, vault-08's hand-over; lock_ops.rs). Body = the bytes; header `x-cc-path` = the target path (as for cc_write_file).
+/// → true when this call made the file, false when it already existed (the OS decides). Tablet documents cannot: "unsupported", and the vault falls back.
+#[tauri::command]
+pub async fn cc_create_file_exclusive(grants: State<'_, Grants>, request: Request<'_>) -> Result<bool, String> {
+    let path = request.headers().get("x-cc-path").and_then(|v| v.to_str().ok()).and_then(decode_component).ok_or("missing path")?;
+    let bytes = body_bytes(request.body()).ok_or("expected bytes")?;
+    if path.starts_with(DOC_PREFIX) {
+        return Err("unsupported: exclusive create is not available for tablet documents".into());
+    }
+    let p = check(&grants, &path)?;
+    tauri::async_runtime::spawn_blocking(move || crate::lock_ops::create_exclusive(&p, &bytes)).await.map_err(|e| e.to_string())?
+}
+
+/// → true when a file was removed, false when there was none (a folder is refused).
+#[tauri::command]
+pub async fn cc_remove_file(grants: State<'_, Grants>, path: String) -> Result<bool, String> {
+    if path.starts_with(DOC_PREFIX) {
+        return Err("unsupported: removing is not available for tablet documents".into());
+    }
+    let p = check(&grants, &path)?;
+    tauri::async_runtime::spawn_blocking(move || crate::lock_ops::remove_one(&p)).await.map_err(|e| e.to_string())?
+}
+
 /// Temp file beside the target, flushed to disk, then renamed over it (rename replaces on Windows too), so a crash
 /// or a full disk never leaves a half-written drawing.
 pub fn write_atomic(p: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let dir = p.parent().ok_or("no folder")?;
+    // the grant was checked by the caller; a vault writes `.ccvault/…` into a folder that does not exist yet (SU.1058)
+    std::fs::create_dir_all(dir).map_err(|e| io_err(&e))?;
     let name = p.file_name().ok_or("no file name")?.to_string_lossy();
     let nanos = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
     let tmp = dir.join(format!(".{name}.cc-{}-{nanos}.tmp", std::process::id()));

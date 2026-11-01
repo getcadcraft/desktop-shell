@@ -1,0 +1,33 @@
+{
+  "@locale": "my",
+  "@name": "မြန်မာ",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "getcadcraft.com သို့ ဝင်ရောက်ရန်",
+  "desktop.account.signed_out.text": "ဝင်ရောက်ခြင်းဖြင့် ဤအက်ပ်က သင့်ကလောင်ဒရော်ဖိုင်များကို ဖွင့်ပြီး သိမ်းနိုင်ပါမည်။ ဤနေရာတွင် တိုတောင်းသော ကုဒ်တစ်ခု ရရှိမည်ဖြစ်ပြီး ဝဘ်ဆိုဒ်ပေါ်ရှိ သင့်ကိုယ်ပိုင်ဘရောက်ဇာတွင် အတည်ပြုပါ။ လျှို့ဝှက်ချက်တစ်ခုခုကို ရိုက်ထည့်ခြင်း သို့မဟုတ် ကူးယူခြင်း မရှိပါ။",
+  "desktop.account.get_code": "ကုဒ်ရယူရန်",
+  "desktop.account.not_now": "ယခုမဟုတ်သေးပါ",
+  "desktop.account.waiting.title": "ဤကုဒ်ကို ဝဘ်ဆိုဒ်တွင် အတည်ပြုပါ",
+  "desktop.account.waiting.text": "သင့်ဘရောက်ဇာတွင် getcadcraft.com/device ဖွင့်ထားပါသည်။ ၎င်းတွင် ဤကုဒ်ကို ပြသနေခြင်း ရှိမရှိ စစ်ဆေးပြီး အတည်ပြုပါ။",
+  "desktop.account.waiting.own": "ဤနေရာတွင် ပြသထားသော ကုဒ်ကိုသာ သင့်ကိုယ်ပိုင်အက်ပ်တွင် အတည်ပြုပါ။",
+  "desktop.account.waiting.left": {
+    "=1": "ကုဒ်သည် နောက်ထပ် ၁ မိနစ်အထိ အလုပ်လုပ်ပါမည်။",
+    "other": "ကုဒ်သည် နောက်ထပ် {n} မိနစ်အထိ အလုပ်လုပ်ပါမည်။"
+  },
+  "desktop.account.waiting.out": "ကုဒ်သက်တမ်းကုန်သွားပါပြီ။",
+  "desktop.account.open_device": "getcadcraft.com/device ကို ဖွင့်ရန်",
+  "desktop.account.cancel": "ပယ်ဖျက်ရန်",
+  "desktop.account.signed_in.title": "ဝင်ရောက်ပြီးပါပြီ",
+  "desktop.account.signed_in.who": "ဝင်ရောက်ပြီးပါပြီ။",
+  "desktop.account.signed_in.text": "ဤကွန်ပျူတာသည် ဤနေရာတွင် ထွက်ခွာမချင်း၊ သို့မဟုတ် getcadcraft.com ပေါ်ရှိ Account, Security အောက်တွင် ဖယ်ရှားမချင်း ဝင်ရောက်ထားဆဲ ဖြစ်ပါမည်။",
+  "desktop.account.sign_out": "ထွက်ရန်",
+  "desktop.account.done": "ပြီးပြီ",
+  "desktop.account.only_desktop": "ဤဝင်းဒိုးသည် CadCraft desktop အက်ပ်အတွင်းတွင်သာ အလုပ်လုပ်ပါသည်။",
+  "desktop.reason.throttled": "တိုတောင်းသော အချိန်အတွင်း ကုဒ်များ အရမ်းများနေပါသည်။ မိနစ်အနည်းငယ်အကြာတွင် ထပ်ကြိုးစားပါ။",
+  "desktop.reason.expired": "အတည်မပြုမီ ကုဒ်သက်တမ်းကုန်သွားပါသည်။ အသစ်တောင်းပါ။",
+  "desktop.reason.denied": "ဝဘ်ဆိုဒ်တွင် ဝင်ရောက်မှုကို ပယ်ချခဲ့ပါသည်။",
+  "desktop.reason.revoked": "ဤကွန်ပျူတာကို getcadcraft.com တွင် ထွက်ခဲ့ပြီးပါပြီ။ ကလောင်ဒရော်ဖိုင်များ အသုံးပြုရန် ထပ်ဝင်ရောက်ပါ။ ဤကွန်ပျူတာပေါ်ရှိ တစ်ခုမှ မပျောက်ဆုံးပါ။",
+  "desktop.reason.offline_signout": "ဤကွန်ပျူတာတွင် ထွက်ခဲ့ပြီးပါပြီ။ ဝဘ်ဆိုဒ်ကို မဆက်သွယ်နိုင်ပါ- ဤဝင်ရောက်မှုကို getcadcraft.com/account/security တွင်လည်း စာရင်းပြုထားပြီး ၎င်းနေရာတွင် ဖယ်ရှားနိုင်ပါသည်။",
+  "desktop.reason.keystore": "ဤကွန်ပျူတာ၏ credential သိုလှောင်ရာနေရာက ဝင်ရောက်မှုကို ပယ်ချလိုက်ပါသည်။",
+  "desktop.carry.title": "CadCraft Studio ကို ပြင်ဆင်နေပါသည်",
+  "desktop.carry.text": "ယခင်ထည့်သွင်းထားသော သီးခြားအက်ပ်များမှ ဆက်တင်များ၊ မကြာသေးမီဖိုင်များနှင့် ပြန်လည်ရယူရန် မိတ္တူများကို ယူဆောင်နေပါသည်။"
+}

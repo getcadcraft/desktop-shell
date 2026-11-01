@@ -350,7 +350,11 @@ pub fn cloud_path_allowed(path: &str) -> bool {
     (path.starts_with("/api/v1/sync/")
         || exact_or_query("/api/v1/me")
         || exact_or_query("/api/v1/me/avatar")
-        || ["check", "rooms", "end", "assertion"].iter().any(|x| exact_or_query(&format!("/api/v1/live/{x}"))))
+        || ["check", "rooms", "end", "assertion"].iter().any(|x| exact_or_query(&format!("/api/v1/live/{x}")))
+        // 0.8 AC.3: the hosted connector's two calls (a ticket for the relay, and the person's settings); the device token stays on this side
+        || ["session", "settings"].iter().any(|x| exact_or_query(&format!("/api/v1/connect/studio/{x}")))
+        // 0.8 LC.2: comments, notifications, the team model and shared lines of a cloud drawing (sync-scope on the site)
+        || ["comments", "notifications", "model", "lines"].iter().any(|x| exact_or_query(&format!("/api/v1/team/{x}"))))
         && !path.contains("..")
         && !path.contains('#')
         && !path.contains('\\')
@@ -440,11 +444,13 @@ mod tests {
     #[test]
     fn cloud_paths() {
         for ok in ["/api/v1/me", "/api/v1/me?x=1", "/api/v1/sync/status", "/api/v1/me/avatar", "/api/v1/me/avatar?size=64",
-            "/api/v1/live/check?app=cadcraft", "/api/v1/live/rooms", "/api/v1/live/end", "/api/v1/live/assertion"] {
+            "/api/v1/live/check?app=cadcraft", "/api/v1/live/rooms", "/api/v1/live/end", "/api/v1/live/assertion",
+            "/api/v1/connect/studio/session", "/api/v1/connect/studio/settings", "/api/v1/connect/studio/settings?x=1",
+            "/api/v1/team/comments?drawing=x", "/api/v1/team/notifications", "/api/v1/team/model?project=x", "/api/v1/team/lines"] {
             assert!(cloud_path_allowed(ok), "{ok}");
         }
         for no in ["/api/v1/men", "/api/v1/me/avatars", "/api/v1/live/relay/host", "/api/v1/live/rooms/../../admin",
-            "/api/v1/library/items", "/api/v1/me/avatar%2f..", "/api/v1/live/keys", "/api/v1/sync/x#y", "/api/v1/me/ x"] {
+            "/api/v1/library/items", "/api/v1/me/avatar%2f..", "/api/v1/connect/relay/verify", "/api/v1/connect/studio/", "/api/v1/connect/studio/other", "/oauth/token", "/api/v1/live/keys", "/api/v1/sync/x#y", "/api/v1/me/ x", "/api/v1/team/", "/api/v1/team/other", "/api/v1/team/comments/../x", "/api/v1/team/commentsx"] {
             assert!(!cloud_path_allowed(no), "{no}");
         }
     }

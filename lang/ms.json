@@ -1,0 +1,33 @@
+{
+  "@locale": "ms",
+  "@name": "Bahasa Melayu",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "Log masuk ke getcadcraft.com",
+  "desktop.account.signed_out.text": "Log masuk membolehkan aplikasi ini membuka dan menyimpan lukisan awan anda. Anda mendapat kod ringkas di sini dan meluluskannya di laman web, dalam pelayar anda sendiri. Tiada apa-apa rahsia yang ditaip atau disalin.",
+  "desktop.account.get_code": "Dapatkan kod",
+  "desktop.account.not_now": "Jangan sekarang",
+  "desktop.account.waiting.title": "Luluskan kod ini di laman web",
+  "desktop.account.waiting.text": "Pelayar anda telah dibuka ke getcadcraft.com/device. Semak sama ada ia memaparkan kod ini, kemudian luluskannya.",
+  "desktop.account.waiting.own": "Hanya luluskan kod yang dipaparkan di sini, dalam aplikasi anda sendiri.",
+  "desktop.account.waiting.left": {
+    "=1": "Kod ini berfungsi untuk 1 minit lagi.",
+    "other": "Kod ini berfungsi untuk {n} minit lagi."
+  },
+  "desktop.account.waiting.out": "Kod telah tamat tempoh.",
+  "desktop.account.open_device": "Buka getcadcraft.com/device",
+  "desktop.account.cancel": "Batal",
+  "desktop.account.signed_in.title": "Telah log masuk",
+  "desktop.account.signed_in.who": "Telah log masuk.",
+  "desktop.account.signed_in.text": "Komputer ini kekal log masuk sehingga anda log keluar di sini, atau mengalih keluarnya di getcadcraft.com di bawah Akaun, Keselamatan.",
+  "desktop.account.sign_out": "Log keluar",
+  "desktop.account.done": "Selesai",
+  "desktop.account.only_desktop": "Tetingkap ini hanya berfungsi dalam aplikasi desktop CadCraft.",
+  "desktop.reason.throttled": "Terlalu banyak kod dalam masa yang singkat. Cuba lagi dalam beberapa minit.",
+  "desktop.reason.expired": "Kod tamat tempoh sebelum diluluskan. Minta kod baharu.",
+  "desktop.reason.denied": "Log masuk telah ditolak di laman web.",
+  "desktop.reason.revoked": "Komputer ini telah dilog keluar di getcadcraft.com. Log masuk semula untuk menggunakan lukisan awan anda; tiada apa-apa pada komputer ini yang hilang.",
+  "desktop.reason.offline_signout": "Telah log keluar pada komputer ini. Laman web tidak dapat dihubungi: log masuk ini juga disenaraikan di getcadcraft.com/account/security, tempat anda boleh mengalih keluarnya.",
+  "desktop.reason.keystore": "Stor kelayakan komputer ini menolak log masuk.",
+  "desktop.carry.title": "Menyediakan CadCraft Studio",
+  "desktop.carry.text": "Memindahkan tetapan, fail terkini dan salinan pemulihan anda daripada aplikasi berasingan yang dipasang sebelum ini."
+}

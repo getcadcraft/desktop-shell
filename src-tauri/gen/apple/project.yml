@@ -2,7 +2,7 @@ name: cadcraft-desktop
 options:
   bundleIdPrefix: com.getcadcraft.studio
   deploymentTarget:
-    iOS: 15.0
+    iOS: 16.4
 fileGroups: [../../src]
 configs:
   debug: debug
