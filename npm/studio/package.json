@@ -1,0 +1,48 @@
+{
+  "name": "@getcadcraft/studio",
+  "version": "0.1.0",
+  "description": "Start CadCraft Studio on Linux with npx: downloads the AppImage from getcadcraft.com, checks its SHA-256 and CadCraft's signature, caches it and runs it.",
+  "type": "module",
+  "bin": {
+    "cadcraft-studio": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "scripts": {
+    "test": "node test/launcher.test.mjs"
+  },
+  "keywords": [
+    "cadcraft",
+    "cad",
+    "bim",
+    "dwg",
+    "ifc",
+    "appimage",
+    "linux"
+  ],
+  "homepage": "https://getcadcraft.com/download#release-streams",
+  "bugs": "https://getcadcraft.com/support?topic=bug",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getcadcraft/desktop-shell.git",
+    "directory": "npm/studio"
+  },
+  "author": "CadCraft <ddgconsultant@getcadcraft.com>",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}
