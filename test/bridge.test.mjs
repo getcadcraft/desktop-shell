@@ -51,7 +51,8 @@ const invoke = async (cmd, args, opts) => {
     case 'cc_machine_key_set': case 'cc_machine_key_forget': return null;
     case 'cc_plc_start': return { port: args.port || 5020 };
     case 'cc_plc_poll': return [{ id: 3, bytes: [0, 1, 0, 0, 0, 6, 1, 1, 0, 0, 0, 1] }];
-    case 'cc_plc_respond': case 'cc_plc_stop': return null;
+    case 'cc_plc_respond': case 'cc_plc_stop': case 'cc_plc_connect': case 'cc_plc_disconnect': return null;
+    case 'cc_plc_exchange': return [args.bytes[0], args.bytes[1], 0, 0, 0, 4, 1, 1, 1, 0];
     case 'cc_engine_list': return [{ id: 'unreal', name: 'Unreal Engine', kind: 'link', found: false }];
     case 'cc_engine_open_list': return [{ id: 'usdview', found: false }, { id: 'system', found: true }];
     case 'cc_engine_open': return '/home/me/Documents/CadCraft hand-off/scene';
@@ -162,6 +163,15 @@ ok(cr.status === 200 && cr.headers['content-type'] === 'application/json' && cr.
   ok(r.args.id === 3 && Array.isArray(r.args.bytes) && r.args.bytes.length === 10 && r.args.bytes.every((b) => b >= 0 && b < 256), 'respond sends the answer as bytes');
   await d.plc.respond(4, null);
   ok(calls.filter((x) => x.cmd === 'cc_plc_respond').pop().args.bytes === null, 'respond with null means no answer');
+  // 0.9 SU.858 REAL mode: connect out to a PLC, exchange whole frames, disconnect
+  ok(['connect', 'exchange', 'disconnect'].every((k) => typeof d.plc[k] === 'function'), 'plc client API present');
+  await d.plc.connect(' 192.168.1.20', '502.2');
+  const cc = calls.filter((x) => x.cmd === 'cc_plc_connect').pop();
+  ok(cc.args.host === ' 192.168.1.20' && cc.args.port === 502, 'connect sends host and a whole port');
+  const ans = await d.plc.exchange(new Uint8Array([0, 7, 0, 0, 0, 6, 1, 1, 0, 0, 0, 1]));
+  const ex = calls.filter((x) => x.cmd === 'cc_plc_exchange').pop();
+  ok(Array.isArray(ex.args.bytes) && ex.args.bytes.length === 12 && ans[1] === 7, 'exchange sends the frame as bytes and returns the answer frame');
+  ok((await d.plc.disconnect()) === null, 'disconnect');
 }
 // 0.8 AC.11: bring your own key — set / has / delete, a call made natively, and no way to read a key back
 {

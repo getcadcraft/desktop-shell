@@ -1,0 +1,32 @@
+{
+  "@locale": "gl",
+  "desktop.account.title": "Iniciar sesión en getcadcraft.com",
+  "desktop.account.signed_out.text": "Iniciar sesión permite que esta aplicación abra e garde os seus debuxos na nube. Aquí recibe un código curto e aprébao no sitio web, no seu propio navegador. Non se escribe nin se copia ningún dato secreto.",
+  "desktop.account.get_code": "Obter un código",
+  "desktop.account.not_now": "Agora non",
+  "desktop.account.waiting.title": "Aprobe este código no sitio web",
+  "desktop.account.waiting.text": "O seu navegador abriu getcadcraft.com/device. Comprobe que mostra este código e logo aprébao.",
+  "desktop.account.waiting.own": "Aprobe só un código que se mostre aquí, na súa propia aplicación.",
+  "desktop.account.waiting.left": {
+    "=1": "O código funciona durante 1 minuto máis.",
+    "one": "O código funciona durante {n} minuto máis.",
+    "other": "O código funciona durante {n} minutos máis."
+  },
+  "desktop.account.waiting.out": "O código caducou.",
+  "desktop.account.open_device": "Abrir getcadcraft.com/device",
+  "desktop.account.cancel": "Cancelar",
+  "desktop.account.signed_in.title": "Sesión iniciada",
+  "desktop.account.signed_in.who": "Sesión iniciada.",
+  "desktop.account.signed_in.text": "Este equipo mantén a sesión iniciada ata que a peche aquí, ou ata que a elimine en getcadcraft.com, en Conta, Seguridade.",
+  "desktop.account.sign_out": "Pechar sesión",
+  "desktop.account.done": "Feito",
+  "desktop.account.only_desktop": "Esta ventá só funciona dentro da aplicación de escritorio de CadCraft.",
+  "desktop.reason.throttled": "Demasiados códigos nun curto espazo de tempo. Probe de novo dentro duns minutos.",
+  "desktop.reason.expired": "O código caducou antes de ser aprobado. Pida un novo.",
+  "desktop.reason.denied": "No sitio web recusouse o inicio de sesión.",
+  "desktop.reason.revoked": "Pecharon a sesión deste equipo en getcadcraft.com. Inicie sesión de novo para usar os seus debuxos na nube; non se perdeu nada neste equipo.",
+  "desktop.reason.offline_signout": "Sesión pechada neste equipo. Non se puido contactar co sitio web: o inicio de sesión tamén aparece en getcadcraft.com/account/security, onde pode eliminalo.",
+  "desktop.reason.keystore": "O almacén de credenciais deste equipo recusou o inicio de sesión.",
+  "desktop.carry.title": "Configurando CadCraft Studio",
+  "desktop.carry.text": "Estase trasladando a configuración, os ficheiros recentes e as copias de recuperación das aplicacións separadas instaladas antes."
+}

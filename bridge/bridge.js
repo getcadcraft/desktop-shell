@@ -349,6 +349,7 @@
     status: (job) => call('cc_engine_status', { job }),
     result: async (job) => new Uint8Array(await call('cc_engine_result', { job })),
     cancel: (job) => call('cc_engine_cancel', { job }),
+    bambuConnect: (bytes, name) => call('cc_engine_bambu_connect', wire(bytesOf(bytes)), { headers: { 'x-cc-name': encodeURIComponent(String(name || 'plate')) } }),
     openList: () => call('cc_engine_open_list'),
     open: (program, bytes, { kind = 'usd', name = 'scene' } = {}) => call('cc_engine_open', wire(bytesOf(bytes)), { headers: { 'x-cc-open': encodeURIComponent(JSON.stringify({ program: String(program), kind: String(kind), name: String(name) })) } }),
     project: () => call('cc_engine_project'),
@@ -412,6 +413,10 @@
       poll: () => call('cc_plc_poll'),
       respond: (id, bytes) => call('cc_plc_respond', { id: Number(id), bytes: bytes === null || bytes === undefined ? null : Array.from(bytes, (b) => b & 255) }),
       stop: () => call('cc_plc_stop'),
+      // 0.9 SU.858 REAL mode: Studio connects OUT to a PLC (numeric private/loopback IPv4 only; Studio refuses anything else) and relays whole Modbus TCP frames.
+      connect: (host, port) => call('cc_plc_connect', { host: String(host || ''), port: Math.round(Number(port) || 0) }),
+      exchange: (bytes) => call('cc_plc_exchange', { bytes: Array.from(bytes, (b) => b & 255) }),
+      disconnect: () => call('cc_plc_disconnect'),
     }),
     links: Object.freeze({
       launch: () => call('cc_links_launch'),
@@ -510,6 +515,22 @@
   if (flags.suite !== true || flags.live !== true) delete bridge.live;
   else if (flags.account === false && bridge.live) { const { signIn, ...rest } = bridge.live; bridge.live = Object.freeze(rest); }   // eslint-disable-line no-unused-vars
   Object.defineProperty(window, 'cadcraftDesktop', { value: Object.freeze(bridge), enumerable: true });
+
+  // 0.9 D8.13: the page's way to read a machine on the local network (hostfetch.rs). Only `hostFetch` exists; the XE.9 reads
+  // (live.read, opcua.read) are not here yet, and lib/factory answers `needs-studio` without them. GET, MTConnect paths, private addresses.
+  if (!mobile && flags.suite === true) {
+    const hostFetch = async (url) => {
+      const raw = await call('cc_host_fetch', { url: String(url) });
+      const u8 = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+      const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+      const status = dv.getUint16(0);
+      const n = dv.getUint32(2);
+      const body = u8.slice(6 + n);
+      const text = () => Promise.resolve(new TextDecoder().decode(body));
+      return { ok: status >= 200 && status < 300, status, text, json: () => text().then(JSON.parse) };
+    };
+    Object.defineProperty(window, 'ccStudioBridge', { value: Object.freeze({ hostFetch }), enumerable: true });
+  }
 
   if (mobile) return;
 

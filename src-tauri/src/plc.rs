@@ -10,8 +10,10 @@
 //! connection is dropped after 60 s, a frame whose protocol id is not 0 or whose length field does not fit ends the connection. Frames are not stored
 //! after they are answered. Nothing is logged but counts.
 //!
+//! The other direction (Client: Studio connects out to a PLC that is a Modbus TCP server; cc_plc_connect, cc_plc_exchange, cc_plc_disconnect) is below the listener.
+//!
 //! The std-only core compiles and passes alone: `rustc --edition 2021 --test --cfg standalone plc.rs && ./plc`. The Tauri commands (cc_plc_start,
-//! cc_plc_poll, cc_plc_respond, cc_plc_stop) are behind `cfg(not(standalone))`; lib.rs: `mod plc;`, `.manage(plc::Hub::default())`, the four names in
+//! cc_plc_poll, cc_plc_respond, cc_plc_stop) are behind `cfg(not(standalone))`; lib.rs: `mod plc;`, `.manage(plc::Hub::default())`, the four listener names (and cc_plc_connect, cc_plc_exchange, cc_plc_disconnect + `.manage(plc::Client::default())` for the client) in
 //! generate_handler! (computers only), and bridge.js `plc: { start, poll, respond, stop }`.
 
 use std::collections::{HashMap, VecDeque};
@@ -39,6 +41,15 @@ struct Shared {
     stop: AtomicBool,
     conns: AtomicUsize,
     served: AtomicU64,
+}
+
+/// Ports below 1024 need privileges we do not ask for. 0 = any free port.
+pub fn listen_port_ok(port: u16) -> Result<(), &'static str> {
+    if port != 0 && port < 1024 {
+        Err("use a port from 1024 up (a port below needs administrator rights)")
+    } else {
+        Ok(())
+    }
 }
 
 /// What a Modbus TCP header says about the rest of the frame: how many bytes follow the 7-byte header, or why the connection must end.
@@ -224,6 +235,99 @@ fn serve(mut s: TcpStream, sh: &Arc<Shared>) {
     let _ = s.shutdown(Shutdown_Both());
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// The other direction (0.9 SU.858 REAL mode): Studio connects OUT to a PLC that is a Modbus TCP server, and the page asks it things. Same rule as above:
+// this module knows no registers; the page builds each request and reads each answer. Safety limits live here, not in the page, so a page cannot talk
+// Studio into more than a Modbus read/write: the host must be a numeric IPv4 address on this computer or a private network (loopback, 10/8, 172.16/12,
+// 192.168/16, link-local 169.254/16; no names, so no DNS tricks and no public address), one connection at a time, only function codes 1 to 6, 15 and 16
+// (no diagnostics, no file records, no device identification), a request is a whole well-formed frame, the answer has the same transaction id, 2 s to answer.
+pub const CLIENT_FUNCTIONS: [u8; 8] = [1, 2, 3, 4, 5, 6, 15, 16];
+pub const CLIENT_WAIT: Duration = Duration::from_secs(2);
+
+/// Numeric IPv4 on this computer or a private network, or the reason it is refused.
+pub fn client_host(host: &str) -> Result<Ipv4Addr, &'static str> {
+    let ip: Ipv4Addr = host.trim().parse().map_err(|_| "type the PLC's IPv4 address (numbers, like 192.168.1.20), not a name")?;
+    if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
+        Ok(ip)
+    } else {
+        Err("only this computer and private networks (10.x, 172.16-31.x, 192.168.x, 169.254.x) are allowed")
+    }
+}
+
+/// A request the client may send: a whole Modbus TCP frame, protocol id 0, a function code from the short list, a length that matches.
+pub fn client_request_ok(f: &[u8]) -> Result<(), &'static str> {
+    if f.len() < 8 || f.len() > MAX_FRAME {
+        return Err("not a Modbus TCP frame (size)");
+    }
+    let head: [u8; 7] = [f[0], f[1], f[2], f[3], f[4], f[5], f[6]];
+    let rest = rest_of_frame(&head)?;
+    if f.len() != 7 + rest {
+        return Err("the length field does not match the frame");
+    }
+    if !CLIENT_FUNCTIONS.contains(&f[7]) {
+        return Err("function code not allowed (reads and plain writes only)");
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+pub struct Client {
+    stream: Mutex<Option<TcpStream>>,
+}
+
+impl Client {
+    pub fn connect(&self, host: &str, port: u16) -> Result<(), String> {
+        let ip = client_host(host).map_err(|m| m.to_string())?;
+        if port == 0 {
+            return Err("port 0 is not a port".into());
+        }
+        let mut slot = self.stream.lock().map_err(|_| "poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("already connected (disconnect first)".into());
+        }
+        let s = TcpStream::connect_timeout(&SocketAddr::V4(SocketAddrV4::new(ip, port)), CLIENT_WAIT).map_err(|e| format!("cannot connect to {ip}:{port}: {e}"))?;
+        s.set_nodelay(true).ok();
+        s.set_read_timeout(Some(CLIENT_WAIT)).ok();
+        s.set_write_timeout(Some(CLIENT_WAIT)).ok();
+        *slot = Some(s);
+        Ok(())
+    }
+
+    /// Send one request frame, return the answer frame. An error ends the connection (the page connects again), so a late answer never meets the next request.
+    pub fn exchange(&self, req: &[u8]) -> Result<Vec<u8>, String> {
+        client_request_ok(req).map_err(|m| m.to_string())?;
+        let mut slot = self.stream.lock().map_err(|_| "poisoned".to_string())?;
+        let s = slot.as_mut().ok_or_else(|| "not connected".to_string())?;
+        let out = (|| -> std::io::Result<Vec<u8>> {
+            s.write_all(req)?;
+            let ans = read_frame(s)?.ok_or_else(|| std::io::Error::new(ErrorKind::UnexpectedEof, "the PLC closed the connection"))?;
+            if ans[0] != req[0] || ans[1] != req[1] {
+                return Err(std::io::Error::new(ErrorKind::InvalidData, "answer to a different request"));
+            }
+            Ok(ans)
+        })();
+        match out {
+            Ok(a) => Ok(a),
+            Err(e) => {
+                *slot = None;
+                Err(format!("{e}"))
+            }
+        }
+    }
+
+    pub fn close(&self) {
+        if let Ok(mut s) = self.stream.lock() {
+            if let Some(c) = s.take() {
+                c.shutdown(Shutdown_Both()).ok();
+            }
+        }
+    }
+
+    pub fn connected(&self) -> bool {
+        self.stream.lock().map(|s| s.is_some()).unwrap_or(false)
+    }
+}
+
 #[cfg(not(standalone))]
 mod commands {
     use super::*;
@@ -243,9 +347,7 @@ mod commands {
     /// Start listening (computers only). Ports below 1024 need privileges we do not ask for: refused here with a plain message.
     #[tauri::command]
     pub fn cc_plc_start(hub: State<'_, Hub>, port: u16) -> Result<PlcStarted, String> {
-        if port != 0 && port < 1024 {
-            return Err("use a port from 1024 up (a port below needs administrator rights)".into());
-        }
+        listen_port_ok(port).map_err(|m| m.to_string())?;
         hub.start(port).map(|port| PlcStarted { port })
     }
 
@@ -262,6 +364,23 @@ mod commands {
     #[tauri::command]
     pub fn cc_plc_stop(hub: State<'_, Hub>) {
         hub.stop();
+    }
+
+    /// Connect out to a PLC (numeric private/loopback IPv4 only, see client_host).
+    #[tauri::command]
+    pub fn cc_plc_connect(client: State<'_, Client>, host: String, port: u16) -> Result<(), String> {
+        client.connect(&host, port)
+    }
+
+    /// One request frame to the connected PLC, its answer frame back. Async so the up-to-2-second wait does not hold the main thread.
+    #[tauri::command]
+    pub async fn cc_plc_exchange(client: State<'_, Client>, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+        client.exchange(&bytes)
+    }
+
+    #[tauri::command]
+    pub fn cc_plc_disconnect(client: State<'_, Client>) {
+        client.close();
     }
 }
 #[cfg(not(standalone))]
@@ -448,6 +567,203 @@ mod tests {
         c.write_all(&read_coil_frame(2)).unwrap(); // the connection is still usable
         thread::sleep(Duration::from_millis(100));
         assert_eq!(hub.poll().len(), 1);
+        hub.stop();
+    }
+    // ---- client direction (REAL mode: Studio connects out to a PLC) ----
+    #[test]
+    fn client_hosts_are_numeric_and_private() {
+        for ok in ["127.0.0.1", "192.168.1.20", "10.0.0.5", "172.16.3.4", "172.31.255.1", "169.254.1.1", " 192.168.0.9 "] {
+            assert!(client_host(ok).is_ok(), "{ok}");
+        }
+        for bad in ["8.8.8.8", "172.32.0.1", "plc.example.com", "localhost", "::1", "192.168.1", "", "1.2.3.4.5", "0.0.0.0"] {
+            assert!(client_host(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn client_requests_must_be_whole_and_plain() {
+        assert!(client_request_ok(&read_coil_frame(1)).is_ok());
+        let mut other = read_coil_frame(1);
+        other[7] = 8; // diagnostics
+        assert!(client_request_ok(&other).is_err());
+        other[7] = 43; // device identification
+        assert!(client_request_ok(&other).is_err());
+        let mut long = read_coil_frame(1);
+        long.push(0);
+        assert!(client_request_ok(&long).is_err(), "length field says 6, frame is longer");
+        assert!(client_request_ok(&read_coil_frame(1)[..7]).is_err());
+        let mut np = read_coil_frame(1);
+        np[3] = 1;
+        assert!(client_request_ok(&np).is_err(), "protocol id");
+    }
+
+    /// A PLC stand-in: a Modbus TCP server on loopback that answers every frame with `answer`.
+    fn plc_server(answer: fn(&[u8]) -> Option<Vec<u8>>) -> u16 {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut s, _)) = l.accept() {
+                while let Ok(Some(f)) = read_frame(&mut s) {
+                    match answer(&f) {
+                        Some(a) => {
+                            s.write_all(&a).ok();
+                        }
+                        None => {}
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn the_client_talks_to_a_plc_and_checks_the_transaction_id() {
+        let port = plc_server(echo_ok);
+        let c = Client::default();
+        assert!(c.exchange(&read_coil_frame(1)).is_err(), "not connected");
+        c.connect("127.0.0.1", port).unwrap();
+        assert!(c.connect("127.0.0.1", port).is_err(), "one connection at a time");
+        assert_eq!(c.exchange(&read_coil_frame(0x0102)).unwrap(), vec![1, 2, 0, 0, 0, 4, 1, 1, 1, 0]);
+        assert_eq!(c.exchange(&read_coil_frame(0x0103)).unwrap(), vec![1, 3, 0, 0, 0, 4, 1, 1, 1, 0]);
+        c.close();
+        assert!(!c.connected());
+    }
+
+    #[test]
+    fn a_wrong_transaction_id_or_a_silent_plc_ends_the_connection() {
+        let port = plc_server(|f| Some(vec![f[0], f[1] ^ 1, 0, 0, 0, 4, 1, 1, 1, 0]));
+        let c = Client::default();
+        c.connect("127.0.0.1", port).unwrap();
+        assert!(c.exchange(&read_coil_frame(5)).is_err());
+        assert!(!c.connected(), "dropped, so a late answer cannot meet the next request");
+        let port2 = plc_server(none);
+        c.connect("127.0.0.1", port2).unwrap();
+        let t0 = Instant::now();
+        assert!(c.exchange(&read_coil_frame(6)).is_err());
+        assert!(t0.elapsed() < Duration::from_secs(4) && !c.connected());
+    }
+
+    #[test]
+    fn nothing_is_listening_is_a_plain_error() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        let c = Client::default();
+        assert!(c.connect("127.0.0.1", port).unwrap_err().contains("cannot connect"));
+        assert!(c.connect("8.8.8.8", 502).unwrap_err().contains("private"));
+    }
+
+    // ---- 0.9 TW.11: a device that is slow, cuts the cable, answers in pieces or with an exception (software devices on loopback; no real PLC) ----
+
+    /// A PLC stand-in that runs `behave(conn_index, frame, stream)` for every frame, one thread per connection, accepting many connections.
+    fn device(behave: fn(usize, &[u8], &mut TcpStream) -> bool) -> u16 {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let mut n = 0;
+            while let Ok((mut s, _)) = l.accept() {
+                let idx = n;
+                n += 1;
+                thread::spawn(move || {
+                    while let Ok(Some(f)) = read_frame(&mut s) {
+                        if !behave(idx, &f, &mut s) {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_slow_device_is_waited_for_up_to_two_seconds_and_no_longer() {
+        let port = device(|_, f, s| {
+            thread::sleep(Duration::from_millis(if f[1] == 1 { 600 } else { 2600 }));
+            s.write_all(&[f[0], f[1], 0, 0, 0, 4, 1, 1, 1, 0]).ok();
+            true
+        });
+        let c = Client::default();
+        c.connect("127.0.0.1", port).unwrap();
+        let t0 = Instant::now();
+        assert!(c.exchange(&read_coil_frame(1)).is_ok(), "600 ms is fine");
+        assert!(t0.elapsed() >= Duration::from_millis(550) && t0.elapsed() < Duration::from_millis(1500));
+        let t1 = Instant::now();
+        assert!(c.exchange(&read_coil_frame(2)).is_err(), "2.6 s is too slow");
+        assert!(t1.elapsed() >= CLIENT_WAIT && t1.elapsed() < Duration::from_millis(3000), "gave up at about 2 s, not 2.6");
+        assert!(!c.connected(), "and dropped the connection");
+        // the late answer of the slow reply must not be read as the answer to the next request
+        c.connect("127.0.0.1", port).unwrap();
+        assert!(c.exchange(&read_coil_frame(1)).is_ok(), "a fresh connection, a fresh exchange");
+    }
+
+    #[test]
+    fn a_cut_cable_or_half_an_answer_is_an_error_and_a_reconnect_works() {
+        // connection 0: the device closes without answering; connection 1: half an answer then close; connection 2+: normal
+        let port = device(|idx, f, s| {
+            match idx {
+                0 => return false,
+                1 => {
+                    s.write_all(&[f[0], f[1], 0, 0, 0, 4, 1]).ok();
+                    return false;
+                }
+                _ => {
+                    s.write_all(&[f[0], f[1], 0, 0, 0, 4, 1, 1, 1, 0]).ok();
+                }
+            }
+            true
+        });
+        let c = Client::default();
+        c.connect("127.0.0.1", port).unwrap();
+        assert!(c.exchange(&read_coil_frame(1)).is_err(), "closed without an answer");
+        assert!(!c.connected());
+        c.connect("127.0.0.1", port).unwrap();
+        assert!(c.exchange(&read_coil_frame(2)).is_err(), "closed in the middle of an answer");
+        assert!(!c.connected());
+        c.connect("127.0.0.1", port).unwrap();
+        assert!(c.exchange(&read_coil_frame(3)).is_ok(), "the third connection works: reconnect after a drop");
+        assert!(c.exchange(&read_coil_frame(4)).is_ok(), "and keeps working");
+    }
+
+    #[test]
+    fn an_answer_in_pieces_and_an_exception_answer_come_through_whole() {
+        let port = device(|_, f, s| {
+            let ans: Vec<u8> = if f[1] == 9 { vec![f[0], f[1], 0, 0, 0, 3, 1, 0x81, 2] } else { vec![f[0], f[1], 0, 0, 0, 4, 1, 1, 1, 0] };
+            for b in ans {
+                s.write_all(&[b]).ok();
+                thread::sleep(Duration::from_millis(3));
+            }
+            true
+        });
+        let c = Client::default();
+        c.connect("127.0.0.1", port).unwrap();
+        assert_eq!(c.exchange(&read_coil_frame(1)).unwrap().len(), 10, "a byte at a time");
+        let exc = c.exchange(&read_coil_frame(9)).unwrap();
+        assert_eq!(&exc[7..], &[0x81, 2], "an exception answer (illegal data address) is passed on to the page, which decides what it means");
+        assert!(c.connected(), "an exception does not end the connection");
+        assert!(c.exchange(&read_coil_frame(2)).is_ok());
+    }
+
+    #[test]
+    fn listening_ports_below_1024_are_refused() {
+        assert!(listen_port_ok(0).is_ok() && listen_port_ok(1024).is_ok() && listen_port_ok(5020).is_ok());
+        assert!(listen_port_ok(502).is_err() && listen_port_ok(1).is_err() && listen_port_ok(1023).is_err());
+    }
+
+    #[test]
+    fn a_master_that_vanishes_does_not_leave_a_connection_counted() {
+        let hub = Hub::default();
+        let port = hub.start(0).unwrap();
+        for _ in 0..3 {
+            let c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.shutdown(std::net::Shutdown::Both).ok();
+        }
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(hub.connections(), 0, "closed connections are released, so 4 reconnects in a row do not fill the 4 slots");
+        let held: Vec<TcpStream> = (0..MAX_CONNECTIONS).map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap()).collect();
+        thread::sleep(Duration::from_millis(100));
+        assert_eq!(hub.connections(), MAX_CONNECTIONS);
+        drop(held);
         hub.stop();
     }
 }

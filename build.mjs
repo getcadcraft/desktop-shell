@@ -75,6 +75,7 @@ import { pack as msixPack, unpackCheck as msixUnpackCheck } from './msix/pack.mj
 import { appInstaller as msixAppInstaller } from './msix/appinstaller.mjs';
 import { buildFolder as portableFolder, checkFolder as portableCheck } from './portable/layout.mjs';
 import { buildLayout as msixLayout, checkLayout as msixCheck, identityFrom as msixIdentity } from './msix/layout.mjs';
+import { shellJson } from './shell-json.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 // The site's folder, only needed to pack an edition (no --edition). No default: the site is not part of this repo.
@@ -103,6 +104,11 @@ if (!UPDATE_TEST && /^http:/.test(process.env.CC_UPDATE_ENDPOINT || '')) { conso
 // Where the files land: out/, or out/update-test/ for a test build (Downloads::sources never looks there).
 const OUT = UPDATE_TEST ? path.join(HERE, 'out', 'update-test') : path.join(HERE, 'out');
 const PORTABLE = flag('--portable');
+// --packed-app: the installer carries the app folder as ONE zip (app.zip) that the install hook unpacks into $INSTDIR\app, so NSIS
+// sees about 0.35 GB of app data instead of 1.5 GB (makensis on Linux crashes once its uncompressed input passes about 2 GB;
+// 0.9: 1.5 GB suite + 0.7 GB WebView2). Windows installer only; the portable zip still takes the plain folder.
+const PACKED_APP = flag('--packed-app');
+if (PACKED_APP && (TARGET !== 'windows' || UPDATE_TEST)) { console.error('--packed-app: Windows installers only, not with --update-test'); process.exit(1); }
 if (PORTABLE && (!WV2_FIXED || STORE || MSIX || TARGET !== 'windows')) { console.error('--portable: Windows, with --webview2-fixed (the zip carries the runtime), not with --store / --msix'); process.exit(1); }
 const WV2_UNCHECKED = flag('--webview2-unchecked');
 const VERSION = opt('--version', null);
@@ -310,7 +316,7 @@ function replaceHooks(names) {
 
 /** NSIS hook: polite file associations (W.4). Every type → "Open with"; `own` types → our default; `polite` types → our
  *  default only when nothing else claimed them. Uninstall takes back only what is still ours. */
-function hooks(slug, name, exe, apps = []) {
+function hooks(slug, name, exe, apps = [], packed = false) {
   const f = APPS[slug].files;
   const types = APPS._types;
   const all = [...f.own, ...f.polite, ...f.openWith];
@@ -320,6 +326,22 @@ function hooks(slug, name, exe, apps = []) {
   // SD.8 (Studio): the separate 0.4 apps it replaces are removed first (after one question), before POSTINSTALL claims types.
   if (apps.length) L.push(...replaceHooks(apps.map((a) => a.name)));
   L.push('!macro NSIS_HOOK_POSTINSTALL');
+  if (packed) {
+    // --packed-app: app.zip (the whole app folder) is the one resource; unpack it beside the program. The path goes in through an
+    // environment variable so a quote in the install path cannot break the command. A failed unpack stops the install.
+    L.push('  DetailPrint "Unpacking the apps…"',
+      '  RMDir /r "$INSTDIR\\app"',
+      '  System::Call \'Kernel32::SetEnvironmentVariable(t "CC_APP_ZIP", t "$INSTDIR\\app.zip")\'',
+      '  System::Call \'Kernel32::SetEnvironmentVariable(t "CC_APP_DIR", t "$INSTDIR\\app")\'',
+      `  nsExec::ExecToLog 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory($env:CC_APP_ZIP, $env:CC_APP_DIR) } catch { Write-Output $_.Exception.Message; exit 1 }"'`,
+      '  Pop $R0',
+      '  Delete "$INSTDIR\\app.zip"',
+      '  ${If} $R0 != 0',
+      '    RMDir /r "$INSTDIR\\app"',
+      `    MessageBox MB_OK|MB_ICONSTOP "${name} could not unpack its files (code $R0). The install did not finish; please run the installer again."`,
+      '    Abort',
+      '  ${EndIf}');
+  }
   L.push(`  WriteRegStr SHCTX "Software\\Classes\\Applications\\${exe}.exe" "FriendlyAppName" "${name}"`);
   L.push(`  WriteRegStr SHCTX "Software\\Classes\\Applications\\${exe}.exe\\shell\\open\\command" "" '"$INSTDIR\\${exe}.exe" "%1"'`);
   for (const ext of all) {
@@ -367,6 +389,7 @@ function hooks(slug, name, exe, apps = []) {
   }
   L.push('!macroend');
   L.push('!macro NSIS_HOOK_PREUNINSTALL');
+  if (packed) L.push('  RMDir /r "$INSTDIR\\app"');   // unpacked at install, so not in the uninstaller's file list
   for (const ext of all) {
     L.push(`  ReadRegStr $R0 SHCTX "Software\\Classes\\.${ext}" ""`);
     L.push(`  StrCmp $R0 "${cls(ext)}" 0 +2`);
@@ -679,7 +702,11 @@ for (const slug of slugs) {
       fs.rmSync(png);
     }
   }
-  fs.writeFileSync(path.join(stage, 'hooks.nsh'), hooks(slug, name, exe, suiteApps));
+  fs.writeFileSync(path.join(stage, 'hooks.nsh'), hooks(slug, name, exe, suiteApps, PACKED_APP));
+  if (PACKED_APP) {
+    run('zip', ['-qr', '-X', path.join(stage, 'app.zip'), '.'], { cwd: path.join(stage, 'app') });
+    console.log(`   app.zip ${(fs.statSync(path.join(stage, 'app.zip')).size / 1048576).toFixed(0)} MB (installer carries the app folder as one zip; unpacked by the install hook)`);
+  }
   if (WV2_FIXED) {
     const wv = path.basename(path.resolve(WV2_FIXED)).match(/(\d+\.\d+\.\d+\.\d+)/)?.[1] || 'unknown version';
     fs.writeFileSync(path.join(stage, 'WebView2-NOTICE.txt'), [
@@ -695,13 +722,13 @@ for (const slug of slugs) {
     productName: name,
     mainBinaryName: exe,
     version,
-    identifier: `com.getcadcraft.${slug}${UPDATE_TEST ? '.updatetest' : ''}`,
+    identifier: `${APPS[slug].identifier || `com.getcadcraft.${slug}`}${UPDATE_TEST ? '.updatetest' : ''}`,
     bundle: {
       ...(process.env.TAURI_SIGNING_PRIVATE_KEY ? { createUpdaterArtifacts: true } : {}),
       shortDescription: name,
       icon: ['32x32.png', '128x128.png', 'icon.ico'].map((f) => rel2(path.join(stage, 'icons', f))),
       resources: {
-        [rel2(path.join(stage, 'app')) + '/']: 'app/',
+        ...(PACKED_APP ? { [rel2(path.join(stage, 'app.zip'))]: 'app.zip' } : { [rel2(path.join(stage, 'app')) + '/']: 'app/' }),
         [rel2(path.join(stage, 'shell.json'))]: 'shell.json',
         [rel2(path.join(HERE, 'THIRD_PARTY.md'))]: 'THIRD_PARTY.md',
         [rel2(path.join(HERE, 'LICENSE'))]: 'LICENSE',

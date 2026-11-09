@@ -1,0 +1,32 @@
+{
+  "@locale": "gn",
+  "desktop.account.title": "Ingresar a getcadcraft.com",
+  "desktop.account.signed_out.text": "Ingresar hace que esta aplicación pueda abrir y guardar tus planos de la nube. Acá recibís un código corto y lo aprobás en el sitio web, desde tu propio navegador. Nada secreto se escribe ni se copia.",
+  "desktop.account.get_code": "Obtener un código",
+  "desktop.account.not_now": "Ahora no",
+  "desktop.account.waiting.title": "Aprobá este código en el sitio web",
+  "desktop.account.waiting.text": "Tu navegador abrió getcadcraft.com/device. Verificá que muestre este código y después aprobalo.",
+  "desktop.account.waiting.own": "Aprobá solo un código que se muestre acá, en tu propia aplicación.",
+  "desktop.account.waiting.left": {
+    "=1": "El código funciona todavía 1 minuto.",
+    "one": "El código funciona todavía {n} minuto.",
+    "other": "El código funciona todavía {n} minuto."
+  },
+  "desktop.account.waiting.out": "El código se acabó.",
+  "desktop.account.open_device": "Abrir getcadcraft.com/device",
+  "desktop.account.cancel": "Cancelar",
+  "desktop.account.signed_in.title": "Sesión iniciada",
+  "desktop.account.signed_in.who": "Sesión iniciada.",
+  "desktop.account.signed_in.text": "Esta computadora queda con sesión iniciada hasta que cierres sesión acá, o la quites en getcadcraft.com, en Cuenta, Seguridad.",
+  "desktop.account.sign_out": "Cerrar sesión",
+  "desktop.account.done": "Listo",
+  "desktop.account.only_desktop": "Esta ventana funciona solo dentro de la aplicación de escritorio de CadCraft.",
+  "desktop.reason.throttled": "Demasiados códigos en poco tiempo. Probá de nuevo en unos minutos.",
+  "desktop.reason.expired": "El código se acabó antes de ser aprobado. Pedí uno nuevo.",
+  "desktop.reason.denied": "El inicio de sesión fue rechazado en el sitio web.",
+  "desktop.reason.revoked": "Esta computadora fue desconectada en getcadcraft.com. Volvé a ingresar para usar tus planos de la nube; no se perdió nada en esta computadora.",
+  "desktop.reason.offline_signout": "Sesión cerrada en esta computadora. No se pudo contactar el sitio web: el inicio de sesión también figura en getcadcraft.com/account/security, donde podés quitarlo.",
+  "desktop.reason.keystore": "El almacén de credenciales de esta computadora rechazó el inicio de sesión.",
+  "desktop.carry.title": "Configurando CadCraft Studio",
+  "desktop.carry.text": "Trayendo tus configuraciones, archivos recientes y copias de recuperación de las aplicaciones separadas instaladas antes."
+}

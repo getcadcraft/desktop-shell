@@ -29,6 +29,45 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- DC.117: open Studio's own file types from the file manager (VIEW). tauri/wry hands the intent's uri to the shell as
+                 RunEvent::Opened (lib.rs → files::open_urls), which grants it like a picked document. A provider that hides the file
+                 extension in the uri does not match a pathPattern: such a file is opened from Studio's Open dialog instead. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:host="*" android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.modelcraft" />
+                <data android:pathPattern=".*\\..*\\.modelcraft" />
+                <data android:pathPattern=".*\\..*\\..*\\.modelcraft" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:host="*" android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.modelcraft" />
+                <data android:pathPattern=".*\\..*\\.modelcraft" />
+                <data android:pathPattern=".*\\..*\\..*\\.modelcraft" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:host="*" android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.ccsheets" />
+                <data android:pathPattern=".*\\..*\\.ccsheets" />
+                <data android:pathPattern=".*\\..*\\..*\\.ccsheets" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" android:host="*" android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.ccsheets" />
+                <data android:pathPattern=".*\\..*\\.ccsheets" />
+                <data android:pathPattern=".*\\..*\\..*\\.ccsheets" />
+            </intent-filter>
         </activity>
 
         <provider

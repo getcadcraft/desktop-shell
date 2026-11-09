@@ -60,7 +60,7 @@ pub fn platform() -> &'static str {
     }
 }
 
-fn hostname() -> String {
+pub(crate) fn hostname() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
@@ -69,7 +69,7 @@ fn hostname() -> String {
         .unwrap_or_default()
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     // Android (TB.1): no system OpenSSL, so rustls, still verified by the system's own certificates (platform verifier).
     #[cfg(target_os = "android")]
     let provider = {

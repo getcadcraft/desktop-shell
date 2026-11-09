@@ -25,7 +25,7 @@ const PATH_PREFIXES: &[&str] = &["/api/version", "/api/files/local", "/api/v1/fi
 const HEADERS: &[&str] = &["content-type", "x-api-key", "print-after-upload", "overwrite", "accept"];
 
 /// Private-network addresses only: RFC 1918, link-local, IPv6 unique-local and link-local. Never loopback, never public.
-fn private(ip: &IpAddr) -> bool {
+pub(crate) fn private(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => a.is_private() || a.is_link_local(),
         IpAddr::V6(a) => {

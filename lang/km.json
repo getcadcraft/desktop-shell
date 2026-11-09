@@ -1,0 +1,33 @@
+{
+  "@locale": "km",
+  "@name": "ខ្មែរ",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "ចូលទៅកាន់ getcadcraft.com",
+  "desktop.account.signed_out.text": "ការចូលអនុញ្ញាតឱ្យកម្មវិធីនេះបើក និងរក្សាទុកគំនូរពពករបស់អ្នក។ អ្នកទទួលបានកូដខ្លីនៅទីនេះ ហើយអនុម័តវានៅលើគេហទំព័រ ក្នុងកម្មវិធីរុករករបស់អ្នកផ្ទាល់។ គ្មានអ្វីដែលជាការសម្ងាត់ត្រូវបានវាយ ឬចម្លងទេ។",
+  "desktop.account.get_code": "ទទួលកូដ",
+  "desktop.account.not_now": "មិនមែនឥឡូវនេះ",
+  "desktop.account.waiting.title": "អនុម័តកូដនេះនៅលើគេហទំព័រ",
+  "desktop.account.waiting.text": "កម្មវិធីរុករករបស់អ្នកបានបើក getcadcraft.com/device។ សូមពិនិត្យថាវាបង្ហាញកូដនេះ បន្ទាប់មកអនុម័តវា។",
+  "desktop.account.waiting.own": "អនុម័តតែកូដដែលបង្ហាញនៅទីនេះ ក្នុងកម្មវិធីរបស់អ្នកផ្ទាល់ប៉ុណ្ណោះ។",
+  "desktop.account.waiting.left": {
+    "=1": "កូដនេះនៅតែដំណើរការបានមួយនាទីទៀត។",
+    "other": "កូដនេះនៅតែដំណើរការបានទៀត {n} នាទី។"
+  },
+  "desktop.account.waiting.out": "កូដបានអស់សុពលភាពហើយ។",
+  "desktop.account.open_device": "បើក getcadcraft.com/device",
+  "desktop.account.cancel": "បោះបង់",
+  "desktop.account.signed_in.title": "បានចូលហើយ",
+  "desktop.account.signed_in.who": "បានចូលហើយ។",
+  "desktop.account.signed_in.text": "កុំព្យូទ័រនេះនៅតែចូលរហូតដល់អ្នកចាកចេញនៅទីនេះ ឬលុបវានៅ getcadcraft.com ក្រោមគណនី សុវត្ថិភាព។",
+  "desktop.account.sign_out": "ចាកចេញ",
+  "desktop.account.done": "រួចរាល់",
+  "desktop.account.only_desktop": "វិនដូនេះដំណើរការតែនៅក្នុងកម្មវិធី CadCraft សម្រាប់កុំព្យូទ័រប៉ុណ្ណោះ។",
+  "desktop.reason.throttled": "កូដច្រើនពេកក្នុងរយៈពេលខ្លី។ សូមព្យាយាមម្ដងទៀតក្នុងរយៈពេលពីរបីនាទីទៀត។",
+  "desktop.reason.expired": "កូដអស់សុពលភាពមុនពេលត្រូវបានអនុម័ត។ សូមស្នើសុំកូដថ្មី។",
+  "desktop.reason.denied": "ការចូលត្រូវបានបដិសេធនៅលើគេហទំព័រ។",
+  "desktop.reason.revoked": "កុំព្យូទ័រនេះត្រូវបានចាកចេញពី getcadcraft.com។ សូមចូលម្ដងទៀតដើម្បីប្រើគំនូរពពករបស់អ្នក; គ្មានអ្វីនៅលើកុំព្យូទ័រនេះត្រូវបាត់បង់ទេ។",
+  "desktop.reason.offline_signout": "បានចាកចេញនៅលើកុំព្យូទ័រនេះ។ មិនអាចទាក់ទងគេហទំព័របានទេ៖ ការចូលនេះក៏ត្រូវបានចុះបញ្ជីនៅ getcadcraft.com/account/security ដែលអ្នកអាចលុបវាបាន។",
+  "desktop.reason.keystore": "ឃ្លាំងព័ត៌មានសម្ងាត់របស់កុំព្យូទ័រនេះបានបដិសេធការចូល។",
+  "desktop.carry.title": "កំពុងរៀបចំ CadCraft Studio",
+  "desktop.carry.text": "កំពុងនាំយកការកំណត់ ឯកសារថ្មីៗ និងច្បាប់ចម្លងសង្គ្រោះ ពីកម្មវិធីដាច់ដោយឡែកដែលបានដំឡើងពីមុន។"
+}

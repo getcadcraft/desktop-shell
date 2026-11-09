@@ -662,13 +662,25 @@ pub fn path_from_file_uri(uri: &str) -> Option<PathBuf> {
 }
 
 impl Launch {
+    /// THE hand-off (FX.27, DC.117): every way Studio is asked to open something ends here, and nowhere else reaches the window:
+    /// the command line at start (argv), a second start (single-instance), macOS's Apple event and Android's VIEW intent
+    /// (`open_urls` below, from tauri's `RunEvent::Opened`), and a file dropped on the window (`WindowEvent::DragDrop`, lib.rs).
+    /// Each file is granted (the app may then read it), then queued until the page asks (`cc_launch_files`) or, once it has, sent
+    /// to `window.__ccDesktopOpen` (bridge.js onOpenFiles).
     pub fn add<R: Runtime>(&self, app: &AppHandle<R>, files: Vec<PathBuf>) {
         if files.is_empty() {
             return;
         }
         let grants = app.state::<Grants>();
         files.iter().for_each(|p| grant_opened(&grants, p));
-        let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        self.deliver(app, files.iter().map(|p| p.to_string_lossy().into_owned()).collect());
+    }
+
+    /// Paths the page already has a name for (a tablet's `cc-doc:/…`, granted by the caller): queued or sent as they are.
+    pub fn deliver<R: Runtime>(&self, app: &AppHandle<R>, paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
         if *self.drained.lock().unwrap() {
             if let Some(w) = app.get_webview_window("main") {
                 let js = format!("window.__ccDesktopOpen&&window.__ccDesktopOpen({})", serde_json::to_string(&paths).unwrap());
@@ -677,6 +689,81 @@ impl Launch {
         } else {
             self.pending.lock().unwrap().extend(paths);
         }
+    }
+}
+
+/// An add-on package file (OF.4: "Download as a file" on a Library listing: the signed `*.ccaddon.json`).
+fn is_addon_package(p: &Path) -> bool {
+    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_ascii_lowercase().ends_with(".ccaddon.json"))
+}
+
+/// Largest package the drop hook reads (a package is signed JSON; the Library's own limit is far below this).
+const MAX_PACKAGE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Files dropped on a window (tauri's native `DragDropEvent::Drop`, which on Windows and macOS keeps the page's own `drop` from
+/// firing: the OS gives paths, the page gets none). FX.27 + OF.4, one decision for every window:
+///   - an add-on package (`*.ccaddon.json`): its text goes to the page's `window.ccAddonsFromFile({name, bytes})`
+///     (app-addons-account-mount.js verifies the signature itself and says the result on screen); never opened as a drawing
+///   - any other file: the same hand-off as a double-click. The hub (main) opens it in an app window; an app window gets it as
+///     `window.__ccDesktopOpen([path])` (bridge.js onOpenFiles), so it opens in the app that was dropped on
+/// Only files the person dropped are read, nothing else.
+pub fn drop_on_window<R: Runtime>(app: &AppHandle<R>, label: &str, paths: &[PathBuf]) {
+    let Some(window) = app.get_webview_window(label) else { return };
+    let (packages, others): (Vec<&PathBuf>, Vec<&PathBuf>) = paths.iter().filter(|p| p.is_file()).partition(|p| is_addon_package(p));
+    for p in packages {
+        let Ok(meta) = std::fs::metadata(p) else { continue };
+        if meta.len() > MAX_PACKAGE_BYTES {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let js = format!(
+            "window.ccAddonsFromFile&&window.ccAddonsFromFile({{name:{},bytes:new TextEncoder().encode({})}})",
+            serde_json::to_string(&name).unwrap_or_default(),
+            serde_json::to_string(&text).unwrap_or_default()
+        );
+        let _ = window.eval(&js);
+    }
+    let others: Vec<PathBuf> = others.into_iter().cloned().collect();
+    if others.is_empty() {
+        return;
+    }
+    if label == "main" {
+        app.state::<Launch>().add(app, others);
+    } else {
+        let grants = app.state::<Grants>();
+        others.iter().for_each(|p| grant_opened(&grants, p));
+        let list: Vec<String> = others.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let _ = window.eval(&format!("window.__ccDesktopOpen&&window.__ccDesktopOpen({})", serde_json::to_string(&list).unwrap_or_default()));
+    }
+}
+
+/// Resources the system asks Studio to open (tauri's `RunEvent::Opened`: macOS double-click / "Open With" / drop on the Dock icon,
+/// Android's VIEW and SEND intents, iPad's open-in): `file://` becomes a path (like argv), `ccstudio://` links go to the hub, and
+/// an Android `content://` document is granted like a picked one (`cc-doc:/…`; the intent carries a read permission for it).
+pub fn open_urls<R: Runtime>(app: &AppHandle<R>, urls: &[tauri::Url]) {
+    let mut args: Vec<String> = Vec::new();
+    for u in urls {
+        match u.scheme() {
+            "file" | "ccstudio" => args.push(u.as_str().to_string()),
+            #[cfg(mobile)]
+            "content" => {
+                let uri = u.as_str().to_string();
+                let app = app.clone();
+                // The system call may wait on a provider: off the main thread, then handed over like any other file.
+                std::thread::spawn(move || {
+                    if let Ok(Some(d)) = crate::mobile::stat(&uri) {
+                        let (path, evicted) = app.state::<Grants>().grant_doc(&d.uri, &d.name, false);
+                        evicted.iter().for_each(|x| crate::mobile::release(x));
+                        app.state::<Launch>().deliver(&app, vec![path]);
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+    if !args.is_empty() {
+        crate::hand_over(app, args, &std::env::current_dir().unwrap_or_default());
     }
 }
 
@@ -693,6 +780,12 @@ pub fn cc_launch_files<R: Runtime>(window: WebviewWindow<R>, suite: State<'_, cr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn addon_packages_are_told_by_name() {
+        assert!(is_addon_package(Path::new("/x/Reverb.ccaddon.json")) && is_addon_package(Path::new("C:/a/B.CCADDON.JSON")));
+        assert!(!is_addon_package(Path::new("/x/plan.json")) && !is_addon_package(Path::new("/x/a.ccaddon")) && !is_addon_package(Path::new("/x/room.dwg")));
+    }
 
     fn tmp(n: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("cc-files-{n}-{}", std::process::id()));
@@ -797,7 +890,9 @@ mod tests {
         write_atomic(&f, b"new contents").unwrap();
         assert_eq!(std::fs::read(&f).unwrap(), b"new contents");
         assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
-        assert!(write_atomic(&d.join("missing/x.dxf"), b"x").is_err());
+        // SU.1058: a folder that does not exist yet is made, so a vault can write `.ccvault/…`
+        write_atomic(&d.join("missing/x.dxf"), b"x").unwrap();
+        assert_eq!(std::fs::read(d.join("missing/x.dxf")).unwrap(), b"x");
         std::fs::remove_dir_all(d).unwrap();
     }
 

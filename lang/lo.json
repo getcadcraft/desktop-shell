@@ -1,0 +1,32 @@
+{
+  "@locale": "lo",
+  "@name": "ລາວ",
+  "@note": "Draft translation, not yet reviewed by a native speaker",
+  "desktop.account.title": "ເຂົ້າສູ່ລະບົບ getcadcraft.com",
+  "desktop.account.signed_out.text": "ການເຂົ້າສູ່ລະບົບເຮັດໃຫ້ແອັບນີ້ເປີດ ແລະ ບັນທຶກແບບແຕ້ມໃນຄລາວດ໌ຂອງທ່ານໄດ້. ທີ່ນີ້ທ່ານຈະໄດ້ຮັບລະຫັດສັ້ນ ແລ້ວອະນຸມັດຢູ່ເວັບໄຊທ໌ໃນເບຣາວເຊີຂອງທ່ານເອງ. ບໍ່ມີການພິມ ຫຼື ຄັດລອກຂໍ້ມູນລັບໃດໆ.",
+  "desktop.account.get_code": "ຮັບລະຫັດ",
+  "desktop.account.not_now": "ບໍ່ແມ່ນດຽວນີ້",
+  "desktop.account.waiting.title": "ອະນຸມັດລະຫັດນີ້ຢູ່ເວັບໄຊທ໌",
+  "desktop.account.waiting.text": "ເບຣາວເຊີຂອງທ່ານໄດ້ເປີດ getcadcraft.com/device ແລ້ວ. ກວດເບິ່ງວ່າມີລະຫັດນີ້ສະແດງຢູ່, ຈາກນັ້ນຈຶ່ງອະນຸມັດ.",
+  "desktop.account.waiting.own": "ອະນຸມັດສະເພາະລະຫັດທີ່ສະແດງຢູ່ໃນແອັບນີ້ເທົ່ານັ້ນ.",
+  "desktop.account.waiting.left": {
+    "other": "ລະຫັດນີ້ໃຊ້ໄດ້ອີກ {n} ນາທີ."
+  },
+  "desktop.account.waiting.out": "ລະຫັດໝົດອາຍຸແລ້ວ.",
+  "desktop.account.open_device": "ເປີດ getcadcraft.com/device",
+  "desktop.account.cancel": "ຍົກເລີກ",
+  "desktop.account.signed_in.title": "ເຂົ້າສູ່ລະບົບແລ້ວ",
+  "desktop.account.signed_in.who": "ເຂົ້າສູ່ລະບົບແລ້ວ.",
+  "desktop.account.signed_in.text": "ຄອມພິວເຕີເຄື່ອງນີ້ຈະຢູ່ໃນສະຖານະເຂົ້າສູ່ລະບົບຈົນກວ່າທ່ານຈະອອກຈາກລະບົບທີ່ນີ້, ຫຼື ລຶບອອກໃນ getcadcraft.com ພາຍໃຕ້ ບັນຊີ, ຄວາມປອດໄພ.",
+  "desktop.account.sign_out": "ອອກຈາກລະບົບ",
+  "desktop.account.done": "ສຳເລັດ",
+  "desktop.account.only_desktop": "ໜ້າຕ່າງນີ້ໃຊ້ໄດ້ພຽງໃນແອັບເດັສທັອບ CadCraft ເທົ່ານັ້ນ.",
+  "desktop.reason.throttled": "ຂໍລະຫັດຫຼາຍເກີນໄປໃນເວລາສັ້ນ. ກະລຸນາລອງໃໝ່ໃນອີກບໍ່ເທົ່າໃດນາທີ.",
+  "desktop.reason.expired": "ລະຫັດໝົດອາຍຸກ່ອນຈະຖືກອະນຸມັດ. ກະລຸນາຂໍລະຫັດໃໝ່.",
+  "desktop.reason.denied": "ການເຂົ້າສູ່ລະບົບຖືກປະຕິເສດຢູ່ເວັບໄຊທ໌.",
+  "desktop.reason.revoked": "ຄອມພິວເຕີເຄື່ອງນີ້ຖືກອອກຈາກລະບົບຢູ່ getcadcraft.com. ກະລຸນາເຂົ້າສູ່ລະບົບອີກຄັ້ງເພື່ອໃຊ້ແບບແຕ້ມໃນຄລາວດ໌ຂອງທ່ານ; ບໍ່ມີສິ່ງໃດໃນຄອມພິວເຕີເຄື່ອງນີ້ສູນຫາຍ.",
+  "desktop.reason.offline_signout": "ອອກຈາກລະບົບໃນຄອມພິວເຕີເຄື່ອງນີ້ແລ້ວ. ບໍ່ສາມາດເຊື່ອມຕໍ່ເວັບໄຊທ໌ໄດ້: ການເຂົ້າສູ່ລະບົບນີ້ຍັງຖືກລະບຸຢູ່ getcadcraft.com/account/security ເຊິ່ງທ່ານສາມາດລຶບອອກໄດ້.",
+  "desktop.reason.keystore": "ບ່ອນເກັບຂໍ້ມູນຢັ້ງຢືນຂອງຄອມພິວເຕີເຄື່ອງນີ້ປະຕິເສດການເຂົ້າສູ່ລະບົບ.",
+  "desktop.carry.title": "ກຳລັງຕັ້ງຄ່າ CadCraft Studio",
+  "desktop.carry.text": "ກຳລັງນຳການຕັ້ງຄ່າ, ໄຟລ໌ຫຼ້າສຸດ ແລະ ສຳເນົາກູ້ຄືນຈາກແອັບແຍກຕ່າງຫາກທີ່ເຄີຍຕິດຕັ້ງໄວ້ກ່ອນໜ້ານີ້ມາໃຫ້."
+}

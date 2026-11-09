@@ -50,6 +50,7 @@ desktop-shell/
   build.mjs             edition → stage/<slug>/ → installer in out/ (+ SHA256SUMS)
   make-icon.py          the app's icon: the CadCraft mark on its layer colour
   test/bridge.test.mjs  bridge + host.js, no webview          node test/bridge.test.mjs
+  test/handoff.test.mjs open/drop/start-up log wiring (source)  node test/handoff.test.mjs
   test/e2e.mjs          the real shell on WebKitGTK via WebDriver   dbus-run-session -- xvfb-run -a node test/e2e.mjs
   frontend/             a one-line page compiled in, shown only when an install has lost its app folder
 ```
@@ -95,6 +96,20 @@ windows, the assistants' local MCP server, carrying 0.4 per-app data.
   the iPad Keychain. Store builds (`--release`) have no sign-in until decision 11, like `--store` on the desktop.
 - **TLS on Android** is rustls checked by Android's own trust manager (rustls-platform-verifier; no CA list ships).
 - **The suite on Android** is in the APK's assets and is read in place (protocol.rs, NDK AssetManager).
+
+## Opening files, drops and the start-up log (0.9)
+
+- **One hand-off.** Everything that asks Studio to open something ends in `files::Launch::add` (src-tauri/src/files.rs): the command
+  line at start and a second start (`hand_over` in lib.rs), macOS's Apple event and Android's VIEW intent (tauri's `RunEvent::Opened`,
+  `files::open_urls`), and a file dropped on a window (`files::drop_on_window`, from `WindowEvent::DragDrop`). A dropped add-on package
+  (`*.ccaddon.json`) goes to the page's `window.ccAddonsFromFile` instead. Android's manifest lists VIEW filters for the suite's own
+  file types (`modelcraft`, `ccsheets`; apps.json `files.own`).
+- **Start-up log.** Each start writes `startup.log` in the app-data folder (portable copy: `data/`; macOS
+  `~/Library/Application Support/com.getcadcraft.studio/`; Windows `%APPDATA%\com.getcadcraft.studio\`; Linux
+  `~/.local/share/com.getcadcraft.studio/`) and keeps the start before as `startup.previous.log`: one line per stage, a line when the main page
+  has not finished loading 20 s after the window was built, and any panic. No file names, passwords or account data. Ask a person whose
+  Studio will not start for both files.
+- `node test/handoff.test.mjs` checks these are wired (source contracts; what a build must show is in docs/0.9-sessions/studio-fix-09.md).
 
 ## Build
 

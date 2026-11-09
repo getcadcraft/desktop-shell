@@ -22,9 +22,13 @@ mod control;
 mod ask_keys;
 #[cfg(desktop)]
 mod machines;
+// Read an MTConnect agent on the local network (0.9 D8.13): the native half of ccStudioBridge.hostFetch.
+#[cfg(desktop)]
+mod hostfetch;
 mod files;
 mod lock_ops;   // 0.8 SU.1058: create-only and remove for strict vault locks (used by files.rs)
 mod links;
+mod startlog;   // 0.9 FX.29: the start-up log a person can send
 #[cfg(target_os = "linux")]
 mod linux;
 // Studio Live (docs/0.5-PLAN.md track LV): the session server, owned by live-core (crypto.rs by live-relay), and Studio's glue
@@ -184,21 +188,25 @@ fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) -> boo
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    startlog::mark("run: begin");
+    startlog::install_panic_hook();
     // Portable copy (0.7 D7.53): found before anything reads or writes a data folder.
     portable::init();
+    startlog::mark(if portable::is_portable() { "portable copy found" } else { "installed copy (no portable data folder)" });
     // Linux (0.7 D7.57): before WebKitGTK starts, so a driver it can't draw with gives a window, not a black one.
     #[cfg(target_os = "linux")]
     linux::guard();
+    startlog::mark("builder: plugins next (single-instance first on desktop: a second start hands over and exits)");
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // On macOS the plugin makes a second start connect to this copy's socket and exit at once, whether or not this copy ever got a window
+            // up (a first start that hangs makes every later double-click do nothing): the log says whether a main window exists.
+            startlog::mark(&format!("a second start was handed to this running copy; main window present: {}", app.get_webview_window("main").is_some()));
             // A second start (double-click on a file, or a ccstudio:// link while Studio runs): hand them to this window.
             let args: Vec<String> = argv.into_iter().skip(1).collect();
-            app.state::<links::Links>().0.add(app, links::links_from_args(&args));
-            app.state::<links::LaunchApps>().0.add(app, links::apps_from_args(&args));
-            let files = files::files_from_args(args, std::path::Path::new(&cwd));
-            app.state::<files::Launch>().add(app, files);
+            hand_over(app, args, std::path::Path::new(&cwd));
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
@@ -329,6 +337,8 @@ pub fn run() {
             #[cfg(desktop)]
             engines::cc_engine_open,
             #[cfg(desktop)]
+            engines::cc_engine_bambu_connect,
+            #[cfg(desktop)]
             engines::cc_engine_project,
             #[cfg(desktop)]
             engines::cc_engine_project_pick,
@@ -349,6 +359,12 @@ pub fn run() {
             #[cfg(desktop)]
             plc::cc_plc_stop,
             #[cfg(desktop)]
+            plc::cc_plc_connect,
+            #[cfg(desktop)]
+            plc::cc_plc_exchange,
+            #[cfg(desktop)]
+            plc::cc_plc_disconnect,
+            #[cfg(desktop)]
             ask_keys::cc_ask_key_set,
             #[cfg(desktop)]
             ask_keys::cc_ask_key_has,
@@ -364,6 +380,8 @@ pub fn run() {
             machines::cc_machine_key_has,
             #[cfg(desktop)]
             machines::cc_machine_key_forget,
+            #[cfg(desktop)]
+            hostfetch::cc_host_fetch,
             #[cfg(feature = "live")]
             studio_live::cc_live_open,
             #[cfg(feature = "live")]
@@ -421,6 +439,8 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            startlog::init(portable::data_file(app.handle(), "startup.log"));
+            startlog::mark("setup: begin (the app-data folder is known)");
             let root = site_root(app.handle());
             let mut cfg = read_config(&root);
             // D7.53: a portable copy keeps its data beside the program and never replaces itself (updates.rs: it only says
@@ -441,7 +461,10 @@ pub fn run() {
             #[cfg(desktop)]
             app.manage(plc::Hub::default());
             #[cfg(desktop)]
+            app.manage(plc::Client::default());
+            #[cfg(desktop)]
             app.manage(control::Control::default());
+            startlog::mark("setup: config read, windows, protocol and engine state managed");
             app.manage(files::Grants::load(portable::data_file(app.handle(), "grants.json")));
             app.manage(files::Launch::default());
             app.manage(links::Links::default());
@@ -467,21 +490,45 @@ pub fn run() {
                 updates::on_start(app.handle());
                 let cwd = std::env::current_dir().unwrap_or_default();
                 let args: Vec<String> = std::env::args().skip(1).collect();
-                app.state::<links::Links>().0.add(app.handle(), links::links_from_args(&args));
-                app.state::<links::LaunchApps>().0.add(app.handle(), links::apps_from_args(&args));
-                let launch = files::files_from_args(args, &cwd);
-                app.state::<files::Launch>().add(app.handle(), launch);
+                hand_over(app.handle(), args, &cwd);
             }
 
+            startlog::mark("setup: update check scheduled, launch arguments handed over");
             let title = if cfg.name.is_empty() { app.package_info().name.clone() } else { cfg.name.clone() };
+            startlog::mark("setup: building the main window");
             #[cfg(desktop)]
             desktop_main_window(app.handle(), &title, cfg.suite)?;
             #[cfg(mobile)]
             app_window(app.handle(), "main", WebviewUrl::CustomProtocol(protocol::start_url("index.html")), &title).build()?;
+            startlog::mark("setup: main window built, waiting for its page");
+            startlog::watchdog();
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("CadCraft desktop shell failed to start");
+        .build(tauri::generate_context!())
+        .expect("CadCraft desktop shell failed to start")
+        .run(|app, event| {
+            match &event {
+                tauri::RunEvent::Ready => startlog::mark("event loop ready"),
+                tauri::RunEvent::ExitRequested { .. } => startlog::mark("exit requested"),
+                _ => {}
+            }
+            // FX.27 / DC.117: macOS passes a double-clicked or "Open With" file as an Apple event, Android as a VIEW intent;
+            // neither is in argv. Both reach the same hand-off as argv does.
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                files::open_urls(app, urls);
+            }
+            let _ = (app, event);
+        });
+}
+
+/// The one door for "open this" at the start and on a second start: files (paths or `file://`), `ccstudio://` join links and
+/// `--app=<slug>` shortcuts. Files end in `files::Launch::add`, which every other source of an opened file uses too (FX.27).
+pub(crate) fn hand_over<R: Runtime>(app: &AppHandle<R>, args: Vec<String>, cwd: &std::path::Path) {
+    app.state::<links::Links>().0.add(app, links::links_from_args(&args));
+    app.state::<links::LaunchApps>().0.add(app, links::apps_from_args(&args));
+    let files = files::files_from_args(args, cwd);
+    app.state::<files::Launch>().add(app, files);
 }
 
 /// Studio Live's outgoing WebSockets: one implementation, in live/ws.rs (the test harness builds it too).
@@ -549,6 +596,15 @@ fn desktop_main_window<R: Runtime>(app: &AppHandle<R>, title: &str, suite: bool)
     if let Some(main) = app.get_webview_window("main") {
         allow_script_popups(&main);
     }
+    // FX.27 + OF.4: a file dropped on the window (files::drop_on_window: add-on packages to the page, other files as a double-click).
+    if let Some(main) = app.get_webview_window("main") {
+        let h = app.clone();
+        main.on_window_event(move |e| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = e {
+                files::drop_on_window(&h, "main", paths);
+            }
+        });
+    }
     #[cfg(windows)]
     sweep_closed_popups(app);
     Ok(())
@@ -570,6 +626,15 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
     b.title(title)
         .initialization_script(&app.state::<ShellFlags>().0)
         .initialization_script(BRIDGE)
+        // FX.29: the main window's first page start and finish go into the start-up log (startlog.rs).
+        .on_page_load(|w, p| {
+            if w.label() == "main" {
+                match p.event() {
+                    tauri::webview::PageLoadEvent::Started => startlog::mark("main page started loading"),
+                    tauri::webview::PageLoadEvent::Finished => startlog::page_loaded(),
+                }
+            }
+        })
         // window.open: the app's own pop-ups (the movable panels' second-monitor window is a same-origin about:blank the
         // page fills itself) become real windows linked to this one, so window.opener works and the size/position
         // features are honored; anything else opens in the person's browser.

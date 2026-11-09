@@ -35,5 +35,9 @@
     <string>UIInterfaceOrientationLandscapeLeft</string>
     <string>UIInterfaceOrientationLandscapeRight</string>
   </array>
+  <!-- Export compliance (owner 2026-11-01): Studio Live carries its own end-to-end encryption (SPAKE2, HKDF, ChaCha20-Poly1305: standard algorithms),
+       so the app does NOT claim to use only Apple's encryption. When Apple issues an ITSEncryptionExportComplianceCode for it, add it here. -->
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <true/>
 </dict>
 </plist>

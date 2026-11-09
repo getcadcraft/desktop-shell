@@ -97,8 +97,10 @@ the outer and inner screens when Apple ships the folding iPhone or its simulator
 ## Before the App Store (owner)
 
 - **Export compliance**: App Store Connect asks whether the app uses encryption. Studio uses the system's HTTPS and Studio
-  Live's own end-to-end encryption (SPAKE2 + ChaCha20-Poly1305, standard algorithms): answer as your counsel advises;
-  `ITSAppUsesNonExemptEncryption` is left out of Info.ios.plist on purpose until then.
+  Live's own end-to-end encryption (SPAKE2 + ChaCha20-Poly1305, standard algorithms in our own code, not only Apple's). Owner 2026-11-01:
+  answer **"Standard encryption algorithms instead of, or in addition to, using or accessing the encryption within Apple's operating system"** (not
+  "None of the algorithms": that is only for apps with no crypto of their own). `ITSAppUsesNonExemptEncryption` is `true` in Info.ios.plist; the follow-up
+  exemption / French-store answers and any US self-classification are counsel's; add Apple's `ITSEncryptionExportComplianceCode` to the plist once issued.
 - Privacy labels: no tracking; the sign-in (test builds) sends the device's model ("iPad") as its name.
 - Screenshots: the store kit (`stores/`) takes them (TB.6): iPad 13-inch `ipad13-*` and iPhone 6.9-inch `iphone69-*` in
   `stores/listings/studio/screenshots/`; App Store Connect scales the 6.9-inch set for smaller iPhones.

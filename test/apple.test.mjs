@@ -50,7 +50,7 @@ ok(extra.NSLocalNetworkUsageDescription && (extra.NSBonjourServices || []).inclu
 ok(extra.LSSupportsOpeningDocumentsInPlace === true && extra.UIFileSharingEnabled === false, 'documents open in place; no iTunes file sharing');
 ok(info.LSRequiresIPhoneOS === true && same(info.UIRequiredDeviceCapabilities, ['arm64', 'metal']), 'LSRequiresIPhoneOS, arm64 + metal');
 ok(info.UILaunchStoryboardName === 'LaunchScreen' && fs.existsSync(path.join(GEN, 'LaunchScreen.storyboard')), 'launch storyboard (required for iPhone screen sizes)');
-ok(!('ITSAppUsesNonExemptEncryption' in extra), 'export compliance left to the owner and counsel (IPAD.md)');
+ok(extra.ITSAppUsesNonExemptEncryption === true, 'export compliance: standard algorithms beyond Apple\'s (Studio Live E2E), owner 2026-11-01 (IPAD.md)');
 
 const priv = plist(path.join(GEN, 'cadcraft-desktop_iOS/PrivacyInfo.xcprivacy'));
 ok(priv.NSPrivacyTracking === false && Array.isArray(priv.NSPrivacyTrackingDomains) && !priv.NSPrivacyTrackingDomains.length, 'privacy manifest: no tracking');

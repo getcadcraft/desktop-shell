@@ -2,6 +2,7 @@
 // STUDIO COPY of getcadcraft.com/tools/render/studio-bridge/engines.rs (the `engines` session's file), mounted by studio_PART_3 (2026-10-28).
 // One difference, owner rule 43 (no GPL program launched through Studio): Blender is GPL, so its two table rows (ENGINES, OPEN_IN) exist only
 // with the cargo feature `blender`, which is OFF in every build we ship; its scripts are not shipped; "blender" is also in DENIED_PROGRAMS so an
+// Owner, 2026-11-03: PrusaSlicer and OrcaSlicer (AGPL-3.0) may be launched here as Kind::Slicer, the person's own installed programs, never bundled: lib/printstage's picker.
 // add-on cannot name it. Unreal Engine (a link engine, nothing runs), usdview and the system's own program stay. RE.4 is the owner's decision.
 //! Outside render engines from Studio (0.8 RE.3, session `engines`; docs/0.8-PART1.md D3). The page never builds a command line:
 //! it asks for "engine blender, this package, these typed settings" and gets progress and a picture back. Everything that decides
@@ -77,6 +78,9 @@ pub enum Kind {
     /// Computes an answer for the page (0.8 CH.7, owner 2026-10-29: a permissively licensed process engine such as Cantera, run through the person's own Python): a case file in, a result
     /// file out, no picture. Opt-in at build time (cargo feature `cantera`, off in every build we ship until the owner builds it on Windows).
     Process,
+    /// Turns a plate into G-code for the print stage (roadmap PS.14): the person's own installed slicer, a separate process. The STL comes from the page; the settings files
+    /// and the whole command line are written here from typed fields; the G-code is read back and the folder removed.
+    Slicer,
 }
 
 pub struct EngineDef {
@@ -98,6 +102,9 @@ pub const ENGINES: &[EngineDef] = &[
     #[cfg(feature = "cantera")]
     EngineDef { id: "cantera", name: "Cantera", kind: Kind::Process, programs: &["python3", "python"], script: Some("cc_cantera_equilibrate.py"), min_version: (3, 9) },
     EngineDef { id: "unreal", name: "Unreal Engine", kind: Kind::Link, programs: &["unrealeditor"], script: None, min_version: (5, 3) },
+    // Their version is not read (OrcaSlicer's --help and --version print nothing on Windows): a command they refuse is reported in the job's log.
+    EngineDef { id: "prusaslicer", name: "PrusaSlicer", kind: Kind::Slicer, programs: &["prusa-slicer-console", "prusa-slicer", "prusaslicer"], script: None, min_version: (0, 0) },
+    EngineDef { id: "orcaslicer", name: "OrcaSlicer", kind: Kind::Slicer, programs: &["orca-slicer", "orcaslicer"], script: None, min_version: (0, 0) },
 ];
 
 pub fn engine(id: &str) -> Option<&'static EngineDef> {
@@ -208,6 +215,27 @@ pub fn candidates(id: &str, os: Os, env: &dyn Fn(&str) -> Option<String>, list: 
                 }
             }
         }
+        ("prusaslicer", Os::Windows) => {
+            for var in ["ProgramFiles", "ProgramW6432"] {
+                if let Some(pf) = env(var) {
+                    out.push(Path::new(&pf).join("Prusa3D/PrusaSlicer/prusa-slicer-console.exe"));
+                }
+            }
+        }
+        ("prusaslicer", Os::Mac) => {
+            out.push(PathBuf::from("/Applications/Original Prusa Drivers/PrusaSlicer.app/Contents/MacOS/PrusaSlicer"));
+            out.push(PathBuf::from("/Applications/PrusaSlicer.app/Contents/MacOS/PrusaSlicer"));
+        }
+        ("prusaslicer", Os::Linux) => out.push(PathBuf::from("/usr/bin/prusa-slicer")),
+        ("orcaslicer", Os::Windows) => {
+            for var in ["ProgramFiles", "ProgramW6432"] {
+                if let Some(pf) = env(var) {
+                    out.push(Path::new(&pf).join("OrcaSlicer/orca-slicer.exe"));
+                }
+            }
+        }
+        ("orcaslicer", Os::Mac) => out.push(PathBuf::from("/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer")),
+        ("orcaslicer", Os::Linux) => out.push(PathBuf::from("/usr/bin/orca-slicer")),
         _ => {} // Unreal on Linux has no standard place: the person picks it
     }
     out
@@ -675,6 +703,253 @@ impl Jobs {
 }
 
 /// Run one prepared job to its end, updating `job.status`. The caller has written the package and the job file into `job.dir`.
+// ------------------------------------------------------------------------------------------------ slicers (roadmap PS.14)
+
+/// The fields a print job has. `parse` refuses unknown keys and anything out of range (the same limits as lib/printstage's cleanJob), so nothing from the page reaches a command line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlicerSettings {
+    pub bed: [f64; 3],
+    pub nozzle: f64,
+    pub filament: f64,
+    pub nozzle_temp: u32,
+    pub bed_temp: u32,
+    pub fan: u32,
+    pub retract: f64,
+    pub layer: f64,
+    pub walls: u32,
+    pub top: u32,
+    pub bottom: u32,
+    pub infill: u32,
+    pub speed: f64,
+    pub supports: bool,
+    pub skirt: bool,
+    pub material: String,
+    pub start: String,
+    pub end: String,
+    /// "" = the bed and G-code above; "bambu-p2s" = OrcaSlicer's own P2S presets from the person's install, a sliced .gcode.3mf for Bambu Connect.
+    pub target: String,
+}
+
+impl SlicerSettings {
+    pub fn parse(pairs: &[(&str, &str)]) -> Result<SlicerSettings, String> {
+        let mut s = SlicerSettings { bed: [220.0, 220.0, 250.0], nozzle: 0.4, filament: 1.75, nozzle_temp: 205, bed_temp: 60, fan: 100, retract: 0.8, layer: 0.2, walls: 2, top: 4, bottom: 3, infill: 15, speed: 50.0, supports: false, skirt: true, material: "pla".into(), start: String::new(), end: String::new(), target: String::new() };
+        let num = |k: &str, v: &str, lo: f64, hi: f64| -> Result<f64, String> {
+            let n: f64 = v.parse().map_err(|_| bad("invalid", &format!("{k} is not a number")))?;
+            if !n.is_finite() || n < lo || n > hi { Err(bad("invalid", &format!("{k} must be {lo} to {hi}"))) } else { Ok(n) }
+        };
+        let whole = |k: &str, v: &str, lo: f64, hi: f64| -> Result<u32, String> { num(k, v, lo, hi).map(|n| n.round() as u32) };
+        let yes = |k: &str, v: &str| -> Result<bool, String> { match v { "1" | "true" => Ok(true), "0" | "false" => Ok(false), _ => Err(bad("invalid", &format!("{k} is not yes or no"))) } };
+        let text = |k: &str, v: &str| -> Result<String, String> {
+            if v.len() > 8000 || v.chars().any(|c| c != '\n' && !(' '..='~').contains(&c)) { Err(bad("invalid", &format!("{k} must be plain G-code text"))) } else { Ok(v.to_string()) }
+        };
+        for (k, v) in pairs {
+            match *k {
+                "bed" => {
+                    let p: Vec<&str> = v.trim_matches(|c| c == '[' || c == ']').split(',').collect();
+                    if p.len() != 3 { return Err(bad("invalid", "bed must be x,y,z")); }
+                    for i in 0..3 { s.bed[i] = num("bed", p[i].trim(), 50.0, 2000.0)?; }
+                }
+                "nozzle" => s.nozzle = num(k, v, 0.1, 1.2)?,
+                "filament" => s.filament = num(k, v, 1.0, 3.0)?,
+                "nozzle_temp" => s.nozzle_temp = whole(k, v, 150.0, 300.0)?,
+                "bed_temp" => s.bed_temp = whole(k, v, 0.0, 120.0)?,
+                "fan" => s.fan = whole(k, v, 0.0, 100.0)?,
+                "retract" => s.retract = num(k, v, 0.0, 8.0)?,
+                "layer" => s.layer = num(k, v, 0.05, 0.8)?,
+                "walls" => s.walls = whole(k, v, 1.0, 8.0)?,
+                "top" => s.top = whole(k, v, 0.0, 20.0)?,
+                "bottom" => s.bottom = whole(k, v, 0.0, 20.0)?,
+                "infill" => s.infill = whole(k, v, 0.0, 100.0)?,
+                "speed" => s.speed = num(k, v, 5.0, 300.0)?,
+                "supports" => s.supports = yes(k, v)?,
+                "skirt" => s.skirt = yes(k, v)?,
+                "material" => s.material = match *v { "pla" | "petg" | "abs" | "tpu" => v.to_string(), _ => return Err(bad("invalid", "unknown material")) },
+                "start" => s.start = text(k, v)?,
+                "end" => s.end = text(k, v)?,
+                "target" => s.target = match *v { "" | "bambu-p2s" => v.to_string(), _ => return Err(bad("invalid", "unknown printer")) },
+                _ => return Err(bad("invalid", &format!("unknown setting {k}"))),
+            }
+        }
+        Ok(s)
+    }
+}
+
+fn gcode_for_ini(text: &str) -> String { text.replace('\\', "").replace('\n', "\\n") }
+fn json_text(text: &str) -> String { let mut o = String::from("\""); for c in text.chars() { match c { '"' => o.push_str("\\\""), '\\' => o.push_str("\\\\"), '\n' => o.push_str("\\n"), c => o.push(c) } } o.push('"'); o }
+
+/// (the files to write in the job's folder, the command line, where the G-code lands). `stl` is the plate, written by the caller beside these.
+pub fn slicer_job(id: &str, s: &SlicerSettings, stl: &str) -> Result<(Vec<(String, String)>, Vec<String>, String), String> {
+    let first = s.layer.max((s.nozzle * 0.75).min(0.3));
+    let shape = format!("0x0,{x}x0,{x}x{y},0x{y}", x = s.bed[0], y = s.bed[1]);
+    let args = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    match id {
+        "prusaslicer" => {
+            let ini = [
+                format!("bed_shape = {shape}"), format!("max_print_height = {}", s.bed[2]), format!("layer_height = {}", s.layer), format!("first_layer_height = {first}"),
+                format!("nozzle_diameter = {}", s.nozzle), format!("filament_diameter = {}", s.filament), format!("temperature = {}", s.nozzle_temp), format!("first_layer_temperature = {}", s.nozzle_temp),
+                format!("bed_temperature = {}", s.bed_temp), format!("first_layer_bed_temperature = {}", s.bed_temp), format!("perimeters = {}", s.walls), format!("top_solid_layers = {}", s.top),
+                format!("bottom_solid_layers = {}", s.bottom), format!("fill_density = {}%", s.infill), format!("support_material = {}", s.supports as u8), format!("skirts = {}", s.skirt as u8),
+                format!("max_fan_speed = {}", s.fan), format!("min_fan_speed = {}", s.fan), format!("retract_length = {}", s.retract), format!("perimeter_speed = {}", s.speed),
+                format!("infill_speed = {}", s.speed), "use_relative_e_distances = 1".into(), "layer_gcode = G92 E0".into(), format!("start_gcode = {}", gcode_for_ini(&s.start)), format!("end_gcode = {}", gcode_for_ini(&s.end)),
+            ].join("\n") + "\n";
+            Ok((vec![("cc-print.ini".into(), ini)], args(&["--export-gcode", "--dont-arrange", "--load", "cc-print.ini", "--output", "out/plate.gcode", stl]), "out/plate.gcode".into()))
+        }
+        "orcaslicer" => {
+            // "from": "system": OrcaSlicer's compatibility check compares a preset's compatible_printers with the printer's system name, and a "User" preset without `inherits` has none (src/OrcaSlicer.cpp, CLI_PROCESS_NOT_COMPATIBLE).
+            let area = format!("[\"0x0\",\"{x}x0\",\"{x}x{y}\",\"0x{y}\"]", x = s.bed[0], y = s.bed[1]);
+            let machine = format!("{{\"type\":\"machine\",\"from\":\"system\",\"name\":\"cc-machine\",\"printer_settings_id\":\"cc-machine\",\"gcode_flavor\":\"marlin\",\"nozzle_diameter\":[\"{}\"],\"printable_area\":{area},\"printable_height\":\"{}\",\"layer_change_gcode\":\"G92 E0\",\"use_relative_e_distances\":\"1\",\"machine_start_gcode\":{},\"machine_end_gcode\":{},\"retraction_length\":[\"{}\"],\"extruder_colour\":[\"#808080\"],\"default_print_profile\":\"cc-process\",\"default_filament_profile\":[\"cc-filament\"]}}", s.nozzle, s.bed[2], json_text(&s.start), json_text(&s.end), s.retract);
+            let process = format!("{{\"type\":\"process\",\"from\":\"system\",\"name\":\"cc-process\",\"print_settings_id\":\"cc-process\",\"layer_height\":\"{}\",\"initial_layer_print_height\":\"{first}\",\"wall_loops\":\"{}\",\"top_shell_layers\":\"{}\",\"bottom_shell_layers\":\"{}\",\"sparse_infill_density\":\"{}%\",\"enable_support\":\"{}\",\"skirt_loops\":\"{}\",\"outer_wall_speed\":\"{}\",\"inner_wall_speed\":\"{}\",\"sparse_infill_speed\":\"{}\",\"compatible_printers\":[\"cc-machine\"]}}", s.layer, s.walls, s.top, s.bottom, s.infill, s.supports as u8, s.skirt as u8, s.speed * 0.6, s.speed, s.speed);
+            let kind = s.material.to_uppercase();
+            let filament = format!("{{\"type\":\"filament\",\"from\":\"system\",\"name\":\"cc-filament\",\"filament_settings_id\":[\"cc-filament\"],\"filament_type\":[\"{kind}\"],\"filament_diameter\":[\"{}\"],\"nozzle_temperature\":[\"{t}\"],\"nozzle_temperature_initial_layer\":[\"{t}\"],\"hot_plate_temp\":[\"{b}\"],\"hot_plate_temp_initial_layer\":[\"{b}\"],\"fan_max_speed\":[\"{f}\"],\"fan_min_speed\":[\"{f}\"],\"compatible_printers\":[\"cc-machine\"]}}", s.filament, t = s.nozzle_temp, b = s.bed_temp, f = s.fan);
+            Ok((vec![("cc-machine.json".into(), machine), ("cc-process.json".into(), process), ("cc-filament.json".into(), filament)],
+                args(&["--load-settings", "cc-machine.json;cc-process.json", "--load-filaments", "cc-filament.json", "--slice", "0", "--arrange", "0", "--orient", "0", "--outputdir", "out", stl]), "out/plate_1.gcode".into()))
+        }
+        _ => Err(bad("unknown_engine", "not a slicer")),
+    }
+}
+
+/// A JSON object's top-level (key, raw value text), std only. Enough for preset files; anything else is an error.
+fn json_top(text: &str) -> Result<Vec<(String, String)>, String> {
+    let b = text.as_bytes();
+    let wrong = || bad("invalid", "a preset file could not be read");
+    let mut i = 0;
+    let skip = |i: &mut usize| while *i < b.len() && (b[*i] as char).is_ascii_whitespace() { *i += 1 };
+    fn string_end(b: &[u8], mut i: usize) -> Option<usize> {
+        i += 1;
+        while i < b.len() {
+            match b[i] { b'\\' => i += 2, b'"' => return Some(i + 1), _ => i += 1 }
+        }
+        None
+    }
+    skip(&mut i);
+    if b.get(i) != Some(&b'{') { return Err(wrong()); }
+    i += 1;
+    let mut out = Vec::new();
+    loop {
+        skip(&mut i);
+        match b.get(i) { Some(b'}') => return Ok(out), Some(b',') => { i += 1; continue; } Some(b'"') => {} _ => return Err(wrong()) }
+        let e = string_end(b, i).ok_or_else(wrong)?;
+        let key = text[i + 1..e - 1].to_string();
+        i = e;
+        skip(&mut i);
+        if b.get(i) != Some(&b':') { return Err(wrong()); }
+        i += 1;
+        skip(&mut i);
+        let start = i;
+        let mut depth = 0i32;
+        loop {
+            match b.get(i).ok_or_else(wrong)? {
+                b'"' => { i = string_end(b, i).ok_or_else(wrong)?; continue; }
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' if depth > 0 => depth -= 1,
+                b',' | b'}' if depth == 0 => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push((key, text[start..i].trim().to_string()));
+    }
+}
+
+/// A preset with everything it inherits written out: the CLI wants whole files. Names come from the program's own files; only plain names are followed.
+fn flat_preset(dir: &Path, name: &str) -> Result<Vec<(String, String)>, String> {
+    let mut merged: Vec<(String, String)> = Vec::new();
+    let mut at = name.to_string();
+    for _ in 0..12 {
+        if at.contains(['/', '\\']) || at.contains("..") { return Err(bad("invalid", "a preset name is not plain")); }
+        let text = std::fs::read_to_string(dir.join(format!("{at}.json"))).map_err(|_| bad("no_profile", &format!("this OrcaSlicer has no preset {at}")))?;
+        let own = json_top(&text)?;
+        let parent = own.iter().find(|(k, _)| k == "inherits").map(|(_, v)| v.trim_matches('"').to_string()).unwrap_or_default();
+        for (k, v) in own {
+            if !merged.iter().any(|(x, _)| *x == k) { merged.push((k, v)); }
+        }
+        if parent.is_empty() {
+            merged.retain(|(k, _)| k != "inherits");
+            return Ok(merged);
+        }
+        at = parent;
+    }
+    Err(bad("invalid", "a preset inherits too deeply"))
+}
+
+fn preset_text(mut p: Vec<(String, String)>, overrides: &[(&str, String)]) -> String {
+    for (k, v) in overrides {
+        match p.iter_mut().find(|(x, _)| x == k) { Some(e) => e.1 = v.clone(), None => p.push((k.to_string(), v.clone())) }
+    }
+    let body: Vec<String> = p.iter().map(|(k, v)| format!("{}:{v}", json_text(k))).collect();
+    format!("{{{}}}", body.join(","))
+}
+
+/// Where OrcaSlicer keeps its presets, beside its program: Windows, then macOS, then a Linux package.
+pub fn orca_profiles(program: &Path) -> Result<PathBuf, String> {
+    let dir = program.parent().unwrap_or(Path::new("."));
+    let tries = [dir.join("resources/profiles/BBL"), dir.join("../Resources/profiles/BBL"), dir.join("../share/OrcaSlicer/profiles/BBL"), PathBuf::from("/usr/share/OrcaSlicer/profiles/BBL")];
+    tries.into_iter().find(|p| p.is_dir()).ok_or_else(|| bad("no_profile", "this OrcaSlicer has no Bambu Lab presets"))
+}
+
+/// The P2S route: the maker's presets as OrcaSlicer ships them, with the person's choices of walls, skins, infill and supports over them; temperatures stay the filament preset's.
+/// Nothing of these presets is in anything we ship: they are read from the person's install when they print.
+pub fn bambu_job(s: &SlicerSettings, stl: &str, profiles: &Path) -> Result<(Vec<(String, String)>, Vec<String>, String), String> {
+    let process = if s.layer <= 0.14 { "0.12mm High Quality @BBL P2S" } else if s.layer <= 0.22 { "0.20mm Standard @BBL P2S" } else { "0.24mm Standard @BBL P2S" };
+    let filament = format!("Generic {} @BBL P2S", s.material.to_uppercase());
+    let q = |v: String| format!("\"{v}\"");
+    let machine = preset_text(flat_preset(&profiles.join("machine"), "Bambu Lab P2S 0.4 nozzle")?, &[]);
+    let process = preset_text(flat_preset(&profiles.join("process"), process)?, &[
+        ("wall_loops", q(s.walls.to_string())), ("top_shell_layers", q(s.top.to_string())), ("bottom_shell_layers", q(s.bottom.to_string())),
+        ("sparse_infill_density", q(format!("{}%", s.infill))), ("enable_support", q((s.supports as u8).to_string())), ("skirt_loops", q((s.skirt as u8).to_string())),
+    ]);
+    let filament = preset_text(flat_preset(&profiles.join("filament"), &filament)?, &[]);
+    Ok((vec![("cc-machine.json".into(), machine), ("cc-process.json".into(), process), ("cc-filament.json".into(), filament)],
+        ["--load-settings", "cc-machine.json;cc-process.json", "--load-filaments", "cc-filament.json", "--slice", "0", "--arrange", "0", "--orient", "0", "--outputdir", "out", "--export-3mf", "plate.gcode.3mf", stl].iter().map(|x| x.to_string()).collect(),
+        "out/plate.gcode.3mf".into()))
+}
+
+/// The import link Bambu's wiki gives: both values percent-encoded; version is the protocol's.
+pub fn bambu_connect_url(path: &str, name: &str) -> String {
+    let enc = |t: &str| t.bytes().map(|c| if c.is_ascii_alphanumeric() || b"-_.~".contains(&c) { (c as char).to_string() } else { format!("%{c:02X}") }).collect::<String>();
+    format!("bambu-connect://import-file?path={}&name={}&version=1.0.0", enc(path), enc(name))
+}
+
+/// `drive` for a slicer: it prints no CCRESULT line, so a clean exit with the G-code in place is the result. Any other exit is a failure even with a file there: a crash can leave half a
+/// program, and half a program must never reach a printer. The last lines it printed stay in the job's log for the page to show.
+pub fn drive_slicer(program: &Path, args: &[String], job: &Job, seconds: u64, result: &str) {
+    let note = |l: Line| {
+        let mut s = job.status.lock().unwrap();
+        match l {
+            Line::Progress(f) => s.progress = f,
+            Line::Text(t) => {
+                s.log.push(t);
+                if s.log.len() > 40 {
+                    s.log.remove(0);
+                }
+            }
+            _ => {}
+        }
+    };
+    let r = run_process(program, args, &job.dir, &job.cancel, seconds, &note);
+    let mut s = job.status.lock().unwrap();
+    s.state = match r {
+        Err(e) => {
+            s.error = e.split(':').next().unwrap_or("job_failed").to_string();
+            State::Failed
+        }
+        Ok(_) if job.cancel.load(Ordering::SeqCst) => State::Cancelled,
+        Ok(None) => {
+            s.error = "timed_out".into();
+            State::Failed
+        }
+        Ok(Some(0)) if job.dir.join(result).is_file() => {
+            s.result = Some(result.to_string());
+            s.progress = 1.0;
+            State::Done
+        }
+        Ok(_) => {
+            s.error = "engine_failed".into();
+            State::Failed
+        }
+    };
+}
+
 pub fn drive(program: &Path, args: &[String], job: &Job, seconds: u64) {
     let note = |l: Line| {
         let mut s = job.status.lock().unwrap();
@@ -1035,7 +1310,7 @@ mod commands {
     }
 
     fn find_one(app: &AppHandle, def: &'static EngineDef) -> Found {
-        let mut f = Found { id: def.id, name: def.name, kind: match def.kind { Kind::Render => "render", Kind::Process => "process", Kind::Link => "link" }, found: false, version: String::new(), path: String::new(), why: "not_found".into() };
+        let mut f = Found { id: def.id, name: def.name, kind: match def.kind { Kind::Render => "render", Kind::Process => "process", Kind::Link => "link", Kind::Slicer => "slicer" }, found: false, version: String::new(), path: String::new(), why: "not_found".into() };
         let picked = read_conf(app).get(def.id).cloned();
         let env = |k: &str| std::env::var(k).ok();
         let list = |d: &Path| std::fs::read_dir(d).map(|r| r.filter_map(|e| e.ok().map(|e| e.path())).collect()).unwrap_or_default();
@@ -1152,6 +1427,44 @@ mod commands {
             let (id, job) = jobs.add(dir.clone());
             let args = python_args(&script, &case_file, &dir.join("out").join("result.json"));
             std::thread::spawn(move || drive(&program, &args, &job, MAX_PROCESS_SECONDS));
+            return Ok(id);
+        }
+        if def.kind == Kind::Slicer {
+            let pairs: Vec<(String, String)> = head
+                .get("settings")
+                .and_then(|v| v.as_object())
+                .map(|o| o.iter().map(|(k, v)| (k.clone(), match v { serde_json::Value::String(s) => s.clone(), other => other.to_string() })).collect())
+                .unwrap_or_default();
+            let refs: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let settings = SlicerSettings::parse(&refs)?;
+            let bytes = crate::files::body_bytes(request.body()).ok_or_else(|| bad("invalid", "expected the plate"))?;
+            if bytes.len() < 84 || bytes.len() > MAX_FILE_BYTES {
+                return Err(bad("invalid", "the plate is not a sensible size"));
+            }
+            let found = tauri::async_runtime::spawn_blocking({
+                let app = app.clone();
+                move || find_one(&app, def)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+            if !found.found {
+                return Err(bad(&found.why, &format!("{} is not available", def.name)));
+            }
+            let program = PathBuf::from(&found.path);
+            let (files, args, result) = if settings.target == "bambu-p2s" {
+                if def.id != "orcaslicer" { return Err(bad("invalid", "that route uses OrcaSlicer")); }
+                bambu_job(&settings, "plate.stl", &orca_profiles(&program)?)?
+            } else {
+                slicer_job(def.id, &settings, "plate.stl")?
+            };
+            let dir = job_dir(0)?;
+            let prep = std::fs::create_dir_all(dir.join("out")).and_then(|_| std::fs::write(dir.join("plate.stl"), &bytes)).and_then(|_| files.iter().try_for_each(|(n, t)| std::fs::write(dir.join(n), t)));
+            if let Err(e) = prep {
+                let _ = std::fs::remove_dir_all(&dir);
+                return Err(bad("job_failed", &e.to_string()));
+            }
+            let (id, job) = jobs.add(dir);
+            std::thread::spawn(move || drive_slicer(&program, &args, &job, MAX_PROCESS_SECONDS, &result));
             return Ok(id);
         }
         if def.kind != Kind::Render {
@@ -1275,6 +1588,27 @@ mod commands {
         })
         .await
         .map_err(|e| e.to_string())
+    }
+
+    /// Hands a sliced .gcode.3mf to Bambu Connect, Bambu's documented route for other programs: a local file and its URL scheme. It opens there; the person starts it there. Header `x-cc-name`.
+    #[tauri::command]
+    pub async fn cc_engine_bambu_connect(app: AppHandle, request: Request<'_>) -> Result<(), String> {
+        if cfg!(mobile) {
+            return Err(bad("unsupported", "no outside programs on tablets"));
+        }
+        let name: String = request.headers().get("x-cc-name").and_then(|v| v.to_str().ok()).and_then(crate::files::decode_component).unwrap_or_default().chars().filter(|c| c.is_ascii_alphanumeric() || " _-".contains(*c)).take(80).collect();
+        let name = if name.trim().is_empty() { "plate".to_string() } else { name.trim().to_string() };
+        let bytes = crate::files::body_bytes(request.body()).ok_or_else(|| bad("invalid", "expected the file"))?;
+        if bytes.len() < 4 || &bytes[..2] != b"PK" || bytes.len() > MAX_FILE_BYTES {
+            return Err(bad("invalid", "that is not a sliced 3MF"));
+        }
+        let dir = std::env::temp_dir().join("cadcraft-print");
+        std::fs::create_dir_all(&dir).map_err(|e| bad("job_failed", &e.to_string()))?;
+        let file = dir.join(format!("{name}.gcode.3mf"));
+        std::fs::write(&file, &bytes).map_err(|e| bad("job_failed", &e.to_string()))?;
+        let url = super::bambu_connect_url(&file.to_string_lossy(), &format!("{name}.gcode.3mf"));
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url(url, None::<&str>).map_err(|e| bad("no_bambu_connect", &e.to_string()))
     }
 
     /// Body = the package (a stored zip, with scene.usdc/.usdz and/or scene.glb); header `x-cc-open` = `{program, kind: "usd"|"glb", name}`.
@@ -1473,7 +1807,7 @@ mod commands {
         let (program, pname) = tauri::async_runtime::spawn_blocking({ let app = app.clone(); let r = r.clone(); move || addon_program(&app, &r) }).await.map_err(|e| e.to_string())?.ok_or_else(|| bad("not_found", "the program is not on this computer"))?;
         let key = consent_key(&r.addon, &pname);
         if !read_conf(&app).contains_key(&key) {
-            let text = format!("The add-on \"{addon_name}\" wants to run the program \"{pname}\" on this computer, with a script that comes with the add-on, to draw your picture.\n\nA script can do anything the program can. Only allow this for an add-on you trust.");
+            let text = format!("The add-on \"{addon_name}\" wants to run the program \"{pname}\" on this computer, with a script that comes with the add-on.\n\nA script can do anything the program can. Only allow this for an add-on you trust.");
             let yes = match crate::files::test_answer() {
                 Some(a) => a.is_some(),
                 None => { let w = win.clone(); tauri::async_runtime::spawn_blocking(move || w.dialog().message(text).title("Run a program for an add-on?").buttons(MessageDialogButtons::OkCancelCustom("Allow".into(), "Don't allow".into())).blocking_show()).await.map_err(|e| e.to_string())? }
@@ -1575,6 +1909,80 @@ mod tests {
     }
 
     #[cfg(not(feature = "cantera"))]
+    fn slicer_pairs() -> SlicerSettings {
+        SlicerSettings::parse(&[("bed", "[220,220,250]"), ("start", "G90\nM83\nM140 S60\nM104 S205\nG28\nM190 S60\nM109 S205\nG92 E0"), ("end", "M104 S0\nM140 S0\nM107\nM84"), ("infill", "15"), ("supports", "false")]).unwrap()
+    }
+
+    #[test]
+    fn slicer_settings_refuse_what_they_do_not_know() {
+        assert!(SlicerSettings::parse(&[("nozzle_temp", "900")]).is_err());
+        assert!(SlicerSettings::parse(&[("bed", "[220,220]")]).is_err());
+        assert!(SlicerSettings::parse(&[("material", "plutonium")]).is_err());
+        assert!(SlicerSettings::parse(&[("output", "../../x")]).is_err());
+        assert!(SlicerSettings::parse(&[("start", "G28\u{7}")]).is_err());
+    }
+
+    #[test]
+    fn slicers_are_a_fixed_command_line() {
+        let s = slicer_pairs();
+        let (files, args, result) = slicer_job("prusaslicer", &s, "plate.stl").unwrap();
+        assert_eq!(args, ["--export-gcode", "--dont-arrange", "--load", "cc-print.ini", "--output", "out/plate.gcode", "plate.stl"]);
+        assert_eq!(result, "out/plate.gcode");
+        assert!(files[0].1.contains("start_gcode = G90\\nM83"));
+        let (files, args, result) = slicer_job("orcaslicer", &s, "plate.stl").unwrap();
+        assert_eq!(files.len(), 3);
+        assert!(args.contains(&"--slice".to_string()) && args.contains(&"--outputdir".to_string()));
+        assert_eq!(result, "out/plate_1.gcode");
+        assert!(slicer_job("calc", &s, "plate.stl").is_err());
+        assert!(engine("prusaslicer").is_some() && engine("orcaslicer").is_some());
+    }
+
+    #[test]
+    fn bambu_presets_are_flattened_and_the_link_is_encoded() {
+        let d = job_dir(1).unwrap();
+        for sub in ["machine", "process", "filament"] { std::fs::create_dir_all(d.join(sub)).unwrap(); }
+        std::fs::write(d.join("machine/Bambu Lab P2S 0.4 nozzle.json"), r#"{"name":"m","inherits":"base","a":["x,}"],"b":"own"}"#).unwrap();
+        std::fs::write(d.join("machine/base.json"), r#"{"b":"parent","c":{"d":[1,2]},"from":"system"}"#).unwrap();
+        std::fs::write(d.join("process/0.20mm Standard @BBL P2S.json"), r#"{"name":"p","wall_loops":"9"}"#).unwrap();
+        std::fs::write(d.join("filament/Generic PLA @BBL P2S.json"), r#"{"name":"f","inherits":"../../secret"}"#).unwrap();
+        assert!(bambu_job(&slicer_pairs(), "plate.stl", &d).is_err(), "a parent that is a path is refused");
+        std::fs::write(d.join("filament/Generic PLA @BBL P2S.json"), r#"{"name":"f"}"#).unwrap();
+        let (files, args, result) = bambu_job(&slicer_pairs(), "plate.stl", &d).unwrap();
+        assert!(files[0].1.contains(r#""b":"own""#) && files[0].1.contains(r#""c":{"d":[1,2]}"#) && files[0].1.contains(r#""a":["x,}"]"#) && !files[0].1.contains("inherits"));
+        assert!(files[1].1.contains(r#""wall_loops":"2""#) && files[1].1.contains(r#""sparse_infill_density":"15%""#));
+        assert!(args.contains(&"--export-3mf".to_string()) && result == "out/plate.gcode.3mf");
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(bambu_connect_url("C:\\T\\a b.gcode.3mf", "a b.gcode.3mf"), "bambu-connect://import-file?path=C%3A%5CT%5Ca%20b.gcode.3mf&name=a%20b.gcode.3mf&version=1.0.0");
+        assert!(SlicerSettings::parse(&[("target", "x1c")]).is_err());
+    }
+
+    /// CC_ORCA_PROFILES=<OrcaSlicer's profiles/BBL> with CC_SLICER_FIXTURE: the P2S job for the real program.
+    #[test]
+    fn bambu_fixture_for_the_real_program() {
+        let (Ok(dir), Ok(p)) = (std::env::var("CC_SLICER_FIXTURE"), std::env::var("CC_ORCA_PROFILES")) else { return };
+        let (files, args, result) = bambu_job(&slicer_pairs(), "plate.stl", Path::new(&p)).unwrap();
+        let d = Path::new(&dir).join("bambu");
+        std::fs::create_dir_all(&d).unwrap();
+        for (n, t) in files { std::fs::write(d.join(n), t).unwrap(); }
+        std::fs::write(d.join("args.txt"), args.join("\n")).unwrap();
+        std::fs::write(d.join("result.txt"), result).unwrap();
+    }
+
+    /// Writes the job for tools/printstage/remote-slicers.mjs, which runs exactly these files through the real programs: CC_SLICER_FIXTURE=<dir>.
+    #[test]
+    fn slicer_fixture_for_the_real_programs() {
+        let Ok(dir) = std::env::var("CC_SLICER_FIXTURE") else { return };
+        let s = slicer_pairs();
+        for id in ["prusaslicer", "orcaslicer"] {
+            let (files, args, result) = slicer_job(id, &s, "plate.stl").unwrap();
+            let d = Path::new(&dir).join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            for (n, t) in files { std::fs::write(d.join(n), t).unwrap(); }
+            std::fs::write(d.join("args.txt"), args.join("\n")).unwrap();
+            std::fs::write(d.join("result.txt"), result).unwrap();
+        }
+    }
+
     #[test]
     fn without_the_cantera_feature_there_is_no_process_engine() {
         assert!(engine("cantera").is_none());
@@ -1891,6 +2299,26 @@ mod tests {
     mod unix {
         use super::*;
         use std::sync::Mutex as M;
+
+        fn slicer_run(script: &str) -> (State, String, Option<String>) {
+            let dir = job_dir(1).unwrap();
+            std::fs::create_dir_all(dir.join("out")).unwrap();
+            let job = Job { dir: dir.clone(), status: Mutex::new(Status::new()), cancel: AtomicBool::new(false) };
+            drive_slicer(Path::new("/bin/sh"), &["-c".into(), script.into()], &job, 20, "out/plate.gcode");
+            let s = job.status.lock().unwrap();
+            let r = (s.state.clone(), s.error.clone(), s.result.clone());
+            let _ = std::fs::remove_dir_all(&dir);
+            r
+        }
+
+        #[test]
+        fn a_slicer_counts_only_with_a_clean_exit_and_its_file() {
+            assert_eq!(slicer_run("echo G28 > out/plate.gcode"), (State::Done, String::new(), Some("out/plate.gcode".to_string())));
+            let (state, error, result) = slicer_run("echo half > out/plate.gcode; exit 3");   // a crash leaves half a program
+            assert!(state == State::Failed && error == "engine_failed" && result.is_none());
+            let (state, error, result) = slicer_run("exit 0");   // nothing written
+            assert!(state == State::Failed && error == "engine_failed" && result.is_none());
+        }
 
         fn run(script: &str, seconds: u64, cancel_after_ms: Option<u64>) -> (Option<i32>, Vec<Line>, u128) {
             let d = job_dir(1).unwrap();

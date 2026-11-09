@@ -47,7 +47,15 @@ impl Place {
     /// The window builder at this place.
     #[cfg(desktop)]
     pub fn apply<'a, R: Runtime>(&self, b: tauri::WebviewWindowBuilder<'a, R, AppHandle<R>>) -> tauri::WebviewWindowBuilder<'a, R, AppHandle<R>> {
-        b.inner_size(self.w.max(960) as f64, self.h.max(600) as f64).position(self.x as f64, self.y as f64).maximized(self.maximized)
+        let b = b.inner_size(self.w.max(960) as f64, self.h.max(600) as f64);
+        // FX.28 (macOS: a maximized window came back one menu bar too low): a maximized window is not given a position at all.
+        // The saved rectangle is the one it had before it was maximized (`place_keep`), centred; the system maximizes it into the
+        // screen's work area (below the menu bar, clear of the Dock) itself, so no position can be counted against the full frame.
+        if self.maximized {
+            b.center().maximized(true)
+        } else {
+            b.position(self.x as f64, self.y as f64).maximized(false)
+        }
     }
 }
 
@@ -101,12 +109,15 @@ pub fn track_place<R: Runtime>(w: &WebviewWindow<R>, key: &str) {
     let (h, k, wc) = (w.app_handle().clone(), key.to_string(), w.clone());
     w.on_window_event(move |e| match e {
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-            if let Some(p) = place_of(&wc) {
-                h.state::<Suite>().places.lock().unwrap().insert(k.clone(), p);
+            let st = h.state::<Suite>();
+            let mut m = st.places.lock().unwrap();
+            if let Some(p) = place_keep(&wc, m.get(&k).copied()) {
+                m.insert(k.clone(), p);
             }
         }
         WindowEvent::CloseRequested { .. } => {
-            if let Some(p) = place_of(&wc) {
+            let prev = h.state::<Suite>().places.lock().unwrap().get(&k).copied();
+            if let Some(p) = place_keep(&wc, prev) {
                 h.state::<Suite>().remember(&k, p);
             }
         }
@@ -154,6 +165,18 @@ fn place_of<R: Runtime>(w: &WebviewWindow<R>) -> Option<Place> {
     let (pos, size) = (w.outer_position().ok()?, w.inner_size().ok()?);
     let scale = w.scale_factor().unwrap_or(1.0);
     Some(Place { x: pos.x, y: pos.y, w: (size.width as f64 / scale) as u32, h: (size.height as f64 / scale) as u32, maximized })
+}
+
+/// The place to keep for a window now. A maximized window keeps the rectangle it had before (`prev`), only the flag changes: its
+/// own outer position and size are the work area's, and restoring those is what put a Mac window one menu bar too low (FX.28).
+/// With nothing known before (the very first start is maximized), the current rectangle is kept as it was before this change.
+#[cfg(desktop)]
+fn place_keep<R: Runtime>(w: &WebviewWindow<R>, prev: Option<Place>) -> Option<Place> {
+    let p = place_of(w)?;
+    Some(match prev {
+        Some(pr) if p.maximized => Place { maximized: true, ..pr },
+        _ => p,
+    })
 }
 
 #[cfg(desktop)]
@@ -226,12 +249,15 @@ pub fn cc_windows_open<R: Runtime>(
     w.on_window_event(move |e| match e {
         // Kept in memory as it moves; written when the window closes.
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-            if let Some(p) = place_of(&wc) {
-                h.state::<Suite>().places.lock().unwrap().insert(a.clone(), p);
+            let st = h.state::<Suite>();
+            let mut m = st.places.lock().unwrap();
+            if let Some(p) = place_keep(&wc, m.get(&a).copied()) {
+                m.insert(a.clone(), p);
             }
         }
         WindowEvent::CloseRequested { .. } => {
-            if let Some(p) = place_of(&wc) {
+            let prev = h.state::<Suite>().places.lock().unwrap().get(&a).copied();
+            if let Some(p) = place_keep(&wc, prev) {
                 h.state::<Suite>().remember(&a, p);
             }
         }
@@ -244,6 +270,8 @@ pub fn cc_windows_open<R: Runtime>(
             h.state::<Suite>().launch.lock().unwrap().remove(&l);
             notify(&h, "closed", &l);
         }
+        // FX.27 + OF.4: a file dropped on this app window (files::drop_on_window).
+        WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => files::drop_on_window(&h, &l, paths),
         WindowEvent::Focused(true) => notify(&h, "focus", &l),
         _ => {}
     });

@@ -10,6 +10,10 @@
 //!   data folder lives beside them), so it never replaces itself.
 //! - **package** — an MSIX (package identity): the Store or App Installer updates it (package.rs). The Tauri updater never runs
 //!   inside a package.
+//! - **Flatpak: off** (owner 2026-11-08): inside a Flatpak sandbox the updater never runs and never calls home. The app folder
+//!   (/app) is read-only there, and Flatpak itself updates the app (`flatpak update`, the software centre). A straight .deb or
+//!   AppImage on Linux keeps the feed updater like any other system. The updater stays in the source: a fork that wants it in a
+//!   Flatpak sets `FLATPAK_UPDATER_OFF` to false.
 //!
 //! - **Off unless the build has a feed and a key** (feed / notify): `shell.json` `updates {endpoint, pubkey, auto, edition}` is
 //!   written by build.mjs only when CC_UPDATE_PUBKEY is set. Without it there is no updater and the app never calls home. A
@@ -108,6 +112,22 @@ fn endpoint_ok(c: &UpdateConfig) -> bool {
         || (c.test && (c.endpoint.starts_with("http://127.0.0.1:") || c.endpoint.starts_with("http://localhost:")))
 }
 
+/// A Flatpak has no in-app updater (owner 2026-11-08): Flatpak updates the app. A fork can turn it back on with this one value.
+pub const FLATPAK_UPDATER_OFF: bool = true;
+
+/// Running inside a Flatpak sandbox: Flatpak sets FLATPAK_ID and creates /.flatpak-info.
+pub fn in_flatpak() -> bool {
+    cfg!(target_os = "linux") && (std::env::var_os("FLATPAK_ID").is_some() || std::path::Path::new("/.flatpak-info").exists())
+}
+
+/// `source_for`, then off inside a Flatpak. `flatpak` is passed in, so the rule is testable on any system.
+pub fn source_on(cfg: Option<&UpdateConfig>, portable: bool, packaged: bool, flatpak: bool) -> Option<Source> {
+    if flatpak && FLATPAK_UPDATER_OFF {
+        return None;
+    }
+    source_for(cfg, portable, packaged)
+}
+
 /// The decision (pure): a package always goes to Windows; otherwise only a build with an endpoint and the owner's key has an
 /// updater, and a portable copy only tells.
 pub fn source_for(cfg: Option<&UpdateConfig>, portable: bool, packaged: bool) -> Option<Source> {
@@ -199,8 +219,12 @@ fn now_ms() -> u64 {
 
 impl Updates {
     pub fn new(cfg: Option<UpdateConfig>, portable: bool, prefs_file: Option<PathBuf>) -> Self {
+        Self::new_for(cfg, portable, prefs_file, in_flatpak())
+    }
+    /// `new` with the Flatpak answer given, so tests can run both cases on any computer.
+    pub fn new_for(cfg: Option<UpdateConfig>, portable: bool, prefs_file: Option<PathBuf>, flatpak: bool) -> Self {
         let packaged = package::packaged();
-        let source = source_for(cfg.as_ref(), portable, packaged);
+        let source = source_on(cfg.as_ref(), portable, packaged, flatpak);
         // A test build only (`test`, never published): CC_UPDATES_ROUTE=store|appinstaller|sideloaded forces the route, so the
         // Store's code path can be run on a sideloaded package (it is not a Store install, so the Store has nothing for it).
         #[cfg(windows)]
@@ -530,6 +554,16 @@ mod tests {
     }
 
     #[test]
+    fn a_flatpak_has_no_updater_but_a_straight_linux_install_keeps_it() {
+        let c = cfg("https://getcadcraft.com/api/v1/updates/{{target}}/{{arch}}/{{current_version}}?edition=linux", "key", false);
+        assert_eq!(source_on(Some(&c), false, false, true), None, "inside a Flatpak: off");
+        assert_eq!(source_on(Some(&c), true, false, true), None, "inside a Flatpak, portable or not");
+        assert_eq!(source_on(Some(&c), false, false, false), Some(Source::Feed), ".deb, AppImage and every other system: unchanged");
+        let up = Updates::new_for(Some(c), false, None, true);
+        assert!(up.source.is_none() && !up.auto(), "no source, so no automatic check either");
+    }
+
+    #[test]
     fn no_key_or_no_https_means_no_updater() {
         assert_eq!(source_for(None, false, false), None);
         assert_eq!(source_for(Some(&cfg("https://getcadcraft.com/x", " ", false)), false, false), None);
@@ -563,7 +597,7 @@ mod tests {
         let off: UpdateConfig = serde_json::from_str(r#"{"endpoint":"https://x","pubkey":"k","auto":false}"#).unwrap();
         assert!(!off.auto);
         let dir = std::env::temp_dir().join(format!("cc-updates-auto-{}", std::process::id()));
-        let up = Updates::new(Some(cfg("https://getcadcraft.com/x", "key", false)), false, Some(dir.join("updates.json")));
+        let up = Updates::new_for(Some(cfg("https://getcadcraft.com/x", "key", false)), false, Some(dir.join("updates.json")), false);
         assert!(up.auto());
         up.prefs.lock().unwrap().auto = Some(false);
         assert!(!up.auto(), "the person's off wins");
@@ -573,7 +607,7 @@ mod tests {
     #[test]
     fn a_finished_update_is_noted_after_the_restart() {
         let dir = std::env::temp_dir().join(format!("cc-updates-done-{}", std::process::id()));
-        let up = Updates::new(Some(cfg("https://getcadcraft.com/x", "key", false)), false, Some(dir.join("updates.json")));
+        let up = Updates::new_for(Some(cfg("https://getcadcraft.com/x", "key", false)), false, Some(dir.join("updates.json")), false);
         up.remember("installing", "0.7.1", "n", true);
         up.note_finished_update("0.7.0");
         assert_eq!(up.prefs.lock().unwrap().last.as_ref().unwrap().outcome, "installing", "still the old version: unchanged");
@@ -589,9 +623,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cc-updates-test-{}", std::process::id()));
         let f = dir.join("updates.json");
         let c = cfg("https://getcadcraft.com/x", "key", false);
-        let up = Updates::new(Some(c.clone()), false, Some(f.clone()));
+        let up = Updates::new_for(Some(c.clone()), false, Some(f.clone()), false);
         up.remember("available", "0.7.1", "Fixes", true);
-        let again = Updates::new(Some(c), false, Some(f));
+        let again = Updates::new_for(Some(c), false, Some(f), false);
         let l = again.prefs.lock().unwrap().last.clone().unwrap();
         assert_eq!((l.outcome.as_str(), l.latest.as_str(), l.notes.as_str(), l.asked), ("available", "0.7.1", "Fixes", true));
         assert!(l.at > 0);
