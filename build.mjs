@@ -33,6 +33,7 @@
 //                installer to installed copies (0.7: Tauri's v2 updater artifacts keep the fixed runtime — only the old
 //                v1 updater forced the download bootstrapper). Refused when the runtime is older than the newest Edge Stable
 //                release of its major (webview2.mjs, SD.2); the routine for a Chromium security release is in RUNTIME.md.
+//   --strict-hosts  (NET.3) shell.json carries a Content-Security-Policy connect-src from hosts.json: pages reach only the listed hosts
 //   --portable   (0.7 D7.53) also the portable Windows zip: the program, app/, shell.json with "portable": true, the fixed
 //                WebView2 runtime, the notices; unpack anywhere and run. Its data (settings, recovery copies, recent files,
 //                window places) stays in data/ beside the program. With a feed it only TELLS about a newer version (edition
@@ -76,6 +77,7 @@ import { appInstaller as msixAppInstaller } from './msix/appinstaller.mjs';
 import { buildFolder as portableFolder, checkFolder as portableCheck } from './portable/layout.mjs';
 import { buildLayout as msixLayout, checkLayout as msixCheck, identityFrom as msixIdentity } from './msix/layout.mjs';
 import { shellJson } from './shell-json.mjs';
+import { strictHeaders } from './hosts.mjs';
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 // The site's folder, only needed to pack an edition (no --edition). No default: the site is not part of this repo.
@@ -104,6 +106,9 @@ if (!UPDATE_TEST && /^http:/.test(process.env.CC_UPDATE_ENDPOINT || '')) { conso
 // Where the files land: out/, or out/update-test/ for a test build (Downloads::sources never looks there).
 const OUT = UPDATE_TEST ? path.join(HERE, 'out', 'update-test') : path.join(HERE, 'out');
 const PORTABLE = flag('--portable');
+// NET.3 (Lucas, Discord 2026-11-12): pages may reach only the hosts in hosts.json (CSP connect-src in shell.json). Off by default: servers the
+// person types in (CivilCraft map servers) and add-ons added later from the Library are not on the list and would be refused.
+const STRICT_HOSTS = flag('--strict-hosts');
 // --packed-app: the installer carries the app folder as ONE zip (app.zip) that the install hook unpacks into $INSTDIR\app, so NSIS
 // sees about 0.35 GB of app data instead of 1.5 GB (makensis on Linux crashes once its uncompressed input passes about 2 GB;
 // 0.9: 1.5 GB suite + 0.7 GB WebView2). Windows installer only; the portable zip still takes the plain folder.
@@ -463,7 +468,7 @@ function buildIos({ slug, ed, name, release, version, fileVersion, stage, tauriD
     return fs.existsSync(d) ? fs.readdirSync(d).map((v) => path.join(d, v, 'manifest.json')).filter((f) => fs.existsSync(f)) : [];
   });
   const isolate = manifests.map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).isolate).find(Boolean);
-  const headers = isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {};
+  const headers = { ...(isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {}), ...(STRICT_HOSTS ? strictHeaders(slug) : {}) };
   fs.writeFileSync(path.join(stage, 'shell.json'), JSON.stringify({ app: slug, name, version: release, headers, suite: true,
     ...(RELEASE ? { store: true, account: false } : {}) }, null, 2));
   const rel2 = (p) => path.relative(tauriDir, p);
@@ -585,7 +590,7 @@ function buildMobile({ slug, ed, rel, name, release, version, fileVersion, stage
     return fs.existsSync(d) ? fs.readdirSync(d).map((v) => path.join(d, v, 'manifest.json')).filter((f) => fs.existsSync(f)) : [];
   });
   const isolate = manifests.map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).isolate).find(Boolean);
-  const headers = isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {};
+  const headers = { ...(isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {}), ...(STRICT_HOSTS ? strictHeaders(slug) : {}) };
   fs.writeFileSync(path.join(assets, 'shell.json'), JSON.stringify({ app: slug, name, version: release, headers, suite: true,
     ...(RELEASE ? { store: true, account: false } : {}) }, null, 2));
   fs.copyFileSync(THIRD_PARTY, path.join(assets, 'THIRD_PARTY.md'));
@@ -679,7 +684,7 @@ for (const slug of slugs) {
     })
     : [path.join(stage, 'app/assets/apps', slug, release, 'manifest.json')];
   const isolate = manifests.map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).isolate).find(Boolean);
-  const headers = isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {};
+  const headers = { ...(isolate ? { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': isolate } : {}), ...(STRICT_HOSTS ? strictHeaders(slug) : {}) };
   const updates = !STORE && process.env.CC_UPDATE_PUBKEY ? {
     endpoint: updateEndpoint(slug),
     pubkey: process.env.CC_UPDATE_PUBKEY,

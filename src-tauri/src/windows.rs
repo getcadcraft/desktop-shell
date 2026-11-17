@@ -23,6 +23,9 @@ use tauri::{AppHandle, Manager, Runtime, State, WebviewUrl, WebviewWindow, Windo
 
 use crate::files::{self, Grants};
 use crate::protocol;
+#[cfg(desktop)]
+use crate::popup_places::{Mon, PopupState, Rect};
+use crate::startlog;
 
 #[derive(Default, Serialize, Deserialize, Clone, Copy)]
 pub struct Place {
@@ -260,6 +263,7 @@ pub fn cc_windows_open<R: Runtime>(
             if let Some(p) = place_keep(&wc, prev) {
                 h.state::<Suite>().remember(&a, p);
             }
+            popup_opener_closing(&h, &l);
         }
         WindowEvent::Destroyed => {
             let st = h.state::<Suite>();
@@ -275,6 +279,7 @@ pub fn cc_windows_open<R: Runtime>(
         WindowEvent::Focused(true) => notify(&h, "focus", &l),
         _ => {}
     });
+    startlog::mark(&format!("app window {label} built"));
     notify(&app, "opened", &label);
     Ok(Opened { id: label })
 }
@@ -332,6 +337,104 @@ pub fn cc_windows_focus_hub<R: Runtime>(app: AppHandle<R>, suite: State<'_, Suit
         return Err("off: not the suite".into());
     }
     focus(&app.get_webview_window("main").ok_or("no hub")?)
+}
+
+// ---- 0.10 UI.4: torn-off windows are real Studio windows, remembered per monitor ------------------------------------------------
+// The page's window service opens one same-origin pop-up per torn-off block (on_new_window in lib.rs makes it a real window). Here the
+// shell keeps where each one is (popup_places.rs: keyed by app + the title the page gives the window), puts it back there on the next
+// start if a connected screen still shows it, closes the pop-ups with their app window, and tells the page which ones were out so it can
+// open them again without a click (cc_popup_restore).
+
+#[cfg(desktop)]
+fn mons<R: Runtime>(w: &WebviewWindow<R>) -> Vec<Mon> {
+    w.available_monitors().unwrap_or_default().iter().map(|m| Mon { x: m.position().x, y: m.position().y, w: m.size().width, h: m.size().height }).collect()
+}
+
+#[cfg(desktop)]
+fn rect_of<R: Runtime>(w: &WebviewWindow<R>) -> Option<Rect> {
+    let (pos, size) = (w.outer_position().ok()?, w.inner_size().ok()?);
+    let scale = w.scale_factor().unwrap_or(1.0);
+    Some(Rect { x: pos.x, y: pos.y, w: size.width, h: size.height, scale_milli: (scale * 1000.0).round() as u32 })
+}
+
+/// The app id a window's pop-ups are keyed under: "app-cadcraft-3" is cadcraft, the hub or a one-app edition's window is "studio".
+#[cfg(desktop)]
+pub fn popup_app_of(label: &str) -> String {
+    app_of(label).unwrap_or_else(|| "app".into())
+}
+
+/// A pop-up window was just built for `opener`: follow it (move, resize, close) and close it with its app window.
+#[cfg(desktop)]
+pub fn popup_hook<R: Runtime>(window: &WebviewWindow<R>, opener: &str) {
+    let app = window.app_handle().clone();
+    let label = window.label().to_string();
+    startlog::mark(&format!("pop-up window {label} opened by window {opener}"));
+    app.state::<PopupState>().opened(&label, opener, &popup_app_of(opener));
+    let (h, l, wc) = (app.clone(), label.clone(), window.clone());
+    window.on_window_event(move |e| match e {
+        WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            if let Some(r) = rect_of(&wc) {
+                h.state::<PopupState>().moved(&l, r);
+            }
+        }
+        WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => h.state::<PopupState>().closed(&l),
+        _ => {}
+    });
+}
+
+/// The pop-up's page gave it a title: that is the block. Put it where it was last, if a connected screen shows that place.
+#[cfg(desktop)]
+pub fn popup_titled<R: Runtime>(window: &WebviewWindow<R>, opener: &str, title: &str) {
+    let app = window.app_handle().clone();
+    let Some((key, place)) = app.state::<PopupState>().titled(window.label(), opener, &popup_app_of(opener), title) else { return };
+    let Some(p) = place else { return };
+    if !p.shown_on(&mons(window)) {
+        startlog::mark(&format!("pop-up window {}: its last screen is gone, left where the system put it", window.label()));
+        return;
+    }
+    let (lw, lh) = p.logical_size();
+    let _ = window.set_size(tauri::LogicalSize::new(lw, lh));
+    let _ = window.set_position(tauri::PhysicalPosition::new(p.x, p.y));
+    let _ = key;
+    startlog::mark(&format!("pop-up window {} put back where it was", window.label()));
+}
+
+/// An app window is closing: its pop-ups close with it, and are noted so the page can offer them back next time.
+#[cfg(desktop)]
+pub fn popup_opener_closing<R: Runtime>(app: &AppHandle<R>, opener: &str) {
+    for label in app.state::<PopupState>().opener_closing(opener) {
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.close();
+        }
+    }
+}
+
+/// The block titles this app window had out when it last closed, each once. The page opens them again (its own window service),
+/// and `popup_titled` puts each back on its screen.
+#[cfg(desktop)]
+#[tauri::command]
+pub fn cc_popup_restore<R: Runtime>(app: AppHandle<R>, caller: WebviewWindow<R>) -> Vec<String> {
+    app.state::<PopupState>().take_restore(&popup_app_of(caller.label()))
+}
+
+// ---- 0.10 PERF.18: the start-up log a person can send ------------------------------------------------------------------------------
+
+/// The page says it reached a stage of its own start ("app module running", "first drawing paint"); anything else is refused.
+#[tauri::command]
+pub fn cc_startlog_mark<R: Runtime>(caller: WebviewWindow<R>, stage: String) -> bool {
+    startlog::page_stage(caller.label(), &stage)
+}
+
+/// This start's stages in milliseconds and the two budget answers, as one line of JSON (the About box).
+#[tauri::command]
+pub fn cc_startlog_summary() -> String {
+    startlog::summary()
+}
+
+/// The log's text (this start's, or the one before's) for "Copy" / "Save" in the About box.
+#[tauri::command]
+pub fn cc_startlog_text(previous: Option<bool>) -> String {
+    startlog::text(previous.unwrap_or(false))
 }
 
 #[cfg(test)]

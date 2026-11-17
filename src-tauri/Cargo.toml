@@ -1,6 +1,6 @@
 [package]
 name = "cadcraft-desktop"
-version = "0.4.0"
+version = "0.10.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "CadCraft desktop shell: one app's browser edition in a system webview window (WebView2 on Windows)"
@@ -101,6 +101,10 @@ webview2-com = "0.39"
 # 0.7 MSIX (src/package.rs): package identity, App Installer and Store updates, restart after an update.
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "ApplicationModel", "Foundation",
             "Management_Deployment", "Services_Store", "Win32_Storage_Packaging_Appx", "Win32_System_Recovery", "Win32_UI_Shell"] }
+# 0.8 ID.8 (src/devices.rs): 3D mice through hid.dll with the crate's own Rust code (`windows-native`: no C library is built),
+# MIDI inputs through WinMM. Linux needs neither crate (hidraw and ALSA raw MIDI nodes are read directly).
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+midir = { version = "0.10", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rfd = { version = "0.16", default-features = false, features = ["gtk3"] }
@@ -111,6 +115,11 @@ gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rfd = { version = "0.16", default-features = false }
+# 0.8 ID.8 (src/devices.rs): 3D mice through IOHIDManager. `macos-shared-device`: the device is NOT seized, so the maker's
+# own driver keeps working beside Studio. The crate is MIT; the C library it builds (hidapi, mac/hid.c) is taken under its
+# BSD-3-Clause licence (it is offered under three; never the GPL one). MIDI inputs through CoreMIDI.
+hidapi = { version = "2.6", default-features = false, features = ["macos-shared-device"] }
+midir = { version = "0.10", default-features = false }
 
 # No MPL code in the shipped binary (docs/0.4-PART2.md L.2): dirs-sys's one use of option-ext comes from our own crate.
 [patch.crates-io]

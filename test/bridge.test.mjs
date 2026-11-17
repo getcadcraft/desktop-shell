@@ -71,9 +71,19 @@ const listeners = {};
 const opened = [];
 const window = { __TAURI_INTERNALS__: { invoke }, open: (u) => { opened.push(u); return { opened: u }; } };
 window.top = window;
-const document = { addEventListener: (t, f) => { listeners[t] = f; }, fullscreenElement: null };
+// Every listener is kept (the bridge adds two click listeners on computers: links out and the FX.311 download hook).
+const document = { addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); }, fullscreenElement: null };
+const fire = (t, ev) => (listeners[t] || []).forEach((f) => f(ev));
 const location = { href: 'cadcraft://localhost/index.html', origin: 'cadcraft://localhost' };   // macOS's origin for our pages
-const ctx = vm.createContext({ window, document, location, URL, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder });
+// A stand-in anchor element: the FX.311 hook patches HTMLAnchorElement.prototype.click for detached anchors.
+const anchorClicks = [];
+class HTMLAnchorElement {
+  constructor(attrs = {}) { this.attrs = attrs; this.href = attrs.href || ''; this.isConnected = false; }
+  hasAttribute(k) { return k in this.attrs; }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+  click() { anchorClicks.push(this.href); }
+}
+const ctx = vm.createContext({ window, document, location, URL, Blob, HTMLAnchorElement, setTimeout, Promise, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder });
 vm.runInContext(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8'), ctx);
 const d = window.cadcraftDesktop;
 
@@ -98,9 +108,9 @@ ok(window.cadcraftDesktop === d, 'running twice keeps the first bridge');
   // Links out on computers (owner 2026-11-01: What's new links did nothing on macOS): the page asks the shell.
   const n = () => calls.filter((c) => c.cmd === 'cc_open_url').length;
   const a = (href, extra = {}) => ({ getAttribute: (k) => (k === 'href' ? href : null), hasAttribute: (k) => k in extra });
-  const click = (el) => { let prevented = false; listeners.click({ defaultPrevented: false, target: { closest: () => el }, preventDefault: () => { prevented = true; } }); return prevented; };
+  const click = (el) => { const ev = { defaultPrevented: false, target: { closest: (sel) => (sel === 'a[download]' ? (el.hasAttribute('download') ? el : null) : el) }, preventDefault: () => { ev.defaultPrevented = true; } }; fire('click', ev); return ev.defaultPrevented; };
   const before = n();
-  ok(typeof listeners.click === 'function' && click(a('https://getcadcraft.com/news/studio-08')) && calls.filter((c) => c.cmd === 'cc_open_url').pop().args.url === 'https://getcadcraft.com/news/studio-08',
+  ok(Array.isArray(listeners.click) && click(a('https://getcadcraft.com/news/studio-08')) && calls.filter((c) => c.cmd === 'cc_open_url').pop().args.url === 'https://getcadcraft.com/news/studio-08',
      'a link out (What\'s new) → cc_open_url, the click is stopped');
   ok(!click(a('apps/cadcraft/index.html')) && !click(a('cadcraft://localhost/x.html')) && !click(a('javascript:alert(1)')) && !click(a('https://x.example/f.zip', { download: '' })) && n() === before + 1,
      'our own pages, javascript: and downloads are left alone');
@@ -108,10 +118,45 @@ ok(window.cadcraftDesktop === d, 'running twice keeps the first bridge');
   ok(window.open('about:blank', 'panels', 'width=400')?.opened === 'about:blank' && opened.length === 1, 'window.open of our own pages still opens (the panels window)');
 }
 
+{
+  // 0.10 FX.311 (suggestion #1827): `<a download>` of the page's own data on computers goes to the page's save dialog,
+  // never down the web view's download path (lib.rs on_download froze the window on Linux under Wayland).
+  const saves = () => calls.filter((c) => c.cmd === 'cc_save_dialog');
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);   // %PDF-
+  const url = vm.runInContext('(bytes) => URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }))', ctx)(pdf);
+  ok(/^blob:/.test(url), 'a blob: URL made in the page (the bridge remembers the Blob behind it)', url);
+  // 1. The in-document click (an anchor in the page) is taken by the capture listener.
+  const n0 = saves().length;
+  answer = ['/home/me/Plan.pdf'];
+  const el = new HTMLAnchorElement({ href: url, download: 'Plan.pdf' });
+  el.isConnected = true;
+  const ev = { defaultPrevented: false, target: { closest: (sel) => (sel === 'a[download]' || sel === 'a[href]' ? el : null) }, preventDefault: () => { ev.defaultPrevented = true; } };
+  fire('click', ev);
+  await settle();
+  const s1 = saves().pop();
+  ok(ev.defaultPrevented && saves().length === n0 + 1 && s1.args.opts.defaultPath === 'Plan.pdf', 'a click on <a download href=blob:> → cc_save_dialog with the file name, the click is stopped', JSON.stringify(s1 && s1.args));
+  ok(disk.has('/home/me/Plan.pdf') && disk.get('/home/me/Plan.pdf').length === 5 && disk.get('/home/me/Plan.pdf')[0] === 0x25, 'the blob\'s bytes are written where the person chose (cc_write_file)');
+  // 2. The programmatic click() of a detached anchor (append, click, remove) is taken by the prototype patch.
+  answer = ['/home/me/Plan-2.pdf'];
+  const det = new HTMLAnchorElement({ href: url, download: 'Plan-2.pdf' });
+  det.click();
+  await settle();
+  ok(saves().length === n0 + 2 && disk.has('/home/me/Plan-2.pdf') && anchorClicks.length === 0, 'a detached anchor\'s click() → the save dialog too, the web view never sees a download');
+  // 3. Cancelled: nothing written. A plain link's click() still reaches the element.
+  answer = null;
+  new HTMLAnchorElement({ href: url, download: 'Plan-3.pdf' }).click();
+  await settle();
+  ok(saves().length === n0 + 3 && !disk.has('/home/me/Plan-3.pdf'), 'cancelling the dialog writes nothing');
+  new HTMLAnchorElement({ href: 'https://getcadcraft.com/x.pdf', download: 'x.pdf' }).click();
+  ok(anchorClicks.length === 1 && saves().length === n0 + 3, 'an http(s) download is not the page\'s own data: left to the web view and lib.rs');
+  ok(/saveDownloads\(bridge\)/.test(fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8')), 'the hook is installed on computers (not only the tablet bridge)');
+}
+
 const bytes = await d.readFile('/home/me/a.dwg');
 ok(bytes instanceof Uint8Array && bytes.length === 3, 'readFile → Uint8Array');
 await d.writeFile('/home/me/a.dwg', new Uint8Array([9, 9]));
-const w = calls.find((c) => c.cmd === 'cc_write_file');
+const w = calls.filter((c) => c.cmd === 'cc_write_file').pop();   // the newest: the FX.311 block above wrote files too
 ok(w.args instanceof Uint8Array && w.opts.headers['x-cc-path'] === encodeURIComponent('/home/me/a.dwg'), 'writeFile sends raw bytes + the path header');
 ok(disk.get('/home/me/a.dwg').length === 2, 'writeFile wrote');
 await d.writeFile('/home/me/a.dwg', new Uint8Array([1, 2, 3, 4]).subarray(1, 3));
@@ -189,7 +234,7 @@ window.__ccDesktopAccount({ state: 'signed_in' });
 ok(seen && seen.state === 'signed_in', 'account.onChange hears the shell');
 
 document.fullscreenElement = {};
-listeners.fullscreenchange();
+fire('fullscreenchange');
 ok(calls.some((c) => c.cmd === 'cc_set_fullscreen' && c.args.on === true), 'fullscreenchange → the window follows');
 
 // macOS (flags.nativeFullscreen, GH.1): the page's full screen is the window's own, never WebKit's element fullscreen
@@ -471,6 +516,65 @@ ok(calls.some((c) => c.cmd === 'cc_set_fullscreen' && c.args.on === true), 'full
   off();
   await N.stopAdvertising();
   ok(nodeSh.calls.some((c) => c.cmd === 'cc_render_unadvertise'), 'stopAdvertising reaches the shell');
+}
+
+// 3D mice and MIDI controllers (0.8 ID.8): cadcraftDesktop.devices carries the page's ten calls to devices.rs; Studio on computers only.
+{
+  console.log('cadcraftDesktop.devices (Studio)');
+  const src = fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8');
+  const mk = (flags, answers = {}) => {
+    const calls = [];
+    const w = { __TAURI_INTERNALS__: { invoke: async (cmd, args) => { calls.push([cmd, args]); if (answers[cmd] instanceof Error) throw answers[cmd].message; return answers[cmd]; } }, __ccShellFlags: flags };
+    w.top = w;
+    vm.runInContext(src, vm.createContext({ window: w, document: { addEventListener() {} }, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder, Math, Number, setTimeout, setInterval, clearInterval, Promise }));
+    return { d: w.cadcraftDesktop.devices, calls };
+  };
+  const row = { id: 'hid:256f:c635:0', vendorId: 0x256f, productId: 0xc635, productName: 'SpaceMouse Compact', usagePage: 1, usage: 8 };
+  const { d, calls } = mk({ suite: true }, { cc_hid_list: [row], cc_hid_blocked: 2, cc_hid_rule: 'KERNEL=="hidraw*"', cc_hid_recv: [{ reportId: 1, bytes: [1, 2] }], cc_midi_list: null, cc_midi_recv: [{ bytes: [176, 7, 100], t: 0 }] });
+  ok(d && Object.keys(d).sort().join() === 'hidBlocked,hidClose,hidList,hidOpen,hidRecv,hidRule,midiClose,midiList,midiOpen,midiRecv', 'the ten calls, frozen: ' + (d && Object.isFrozen(d)));
+  ok((await d.hidList())[0].productName === 'SpaceMouse Compact' && (await d.hidBlocked()) === 2 && /hidraw/.test(await d.hidRule()), 'hidList / hidBlocked / hidRule answer the shell\'s rows, count and rule text');
+  await d.hidOpen(row.id); const reps = await d.hidRecv(row.id); await d.hidClose(row.id);
+  ok(reps[0].reportId === 1 && calls.filter((c) => /^cc_hid_(open|recv|close)$/.test(c[0])).every((c) => c[1].id === row.id), 'hidOpen / hidRecv / hidClose carry the device id');
+  ok(Array.isArray(await d.midiList()) && (await d.midiList()).length === 0, 'midiList is a list even when the shell answers nothing');
+  await d.midiOpen('midi:1'); const msgs = await d.midiRecv('midi:1'); await d.midiClose('midi:1');
+  ok(msgs[0].bytes.join() === '176,7,100' && calls.some((c) => c[0] === 'cc_midi_close' && c[1].id === 'midi:1'), 'midiOpen / midiRecv / midiClose carry the input id');
+  const gone = mk({ suite: true }, { cc_hid_recv: new Error('gone: the device was unplugged') });
+  let err = null; try { await gone.d.hidRecv('x'); } catch (e) { err = e; }
+  ok(err && err.code === 'gone' && /^gone\b/.test(err.message), 'an unplugged device answers an error the page reads as "gone"');
+  ok(mk({ suite: false }).d === undefined && /\(mobile \|\| flags\.suite !== true\) delete bridge\.devices/.test(src), 'no devices outside Studio, none on tablets');
+  // every command the bridge calls is registered in lib.rs and written in devices.rs
+  const lib = fs.readFileSync(path.join(HERE, '../src-tauri/src/lib.rs'), 'utf8'), rs = fs.readFileSync(path.join(HERE, '../src-tauri/src/devices.rs'), 'utf8');
+  const cmds = [...new Set(src.match(/'cc_(?:hid|midi)_[a-z]+'/g).map((s) => s.slice(1, -1)))];
+  ok(cmds.length === 10 && cmds.every((c) => lib.includes(`devices::${c},`) && new RegExp(`fn ${c}\\b`).test(rs)), 'the ten commands are registered in lib.rs: ' + cmds.join(' '));
+  ok(/app\.manage\(devices::Devices::default\(\)\)/.test(lib) && /devices::on_window_destroyed/.test(lib), 'lib.rs keeps the device state and closes a window\'s devices when it ends');
+  // nothing is ever written to a device
+  ok(!/\.write\(|send_feature_report|MidiOutput|write_all\(/.test(rs.split('#[cfg(test)]')[0]), 'devices.rs never writes to a device (input only)');
+}
+
+// 0.10 PERF.18 + UI.4: the start-up log and the torn-off windows' restore list.
+{
+  console.log('cadcraftDesktop.startLog / popups');
+  const src = fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8');
+  const mk = (flags, answers = {}) => {
+    const calls = [];
+    const w = { __TAURI_INTERNALS__: { invoke: async (cmd, args) => { calls.push([cmd, args]); return answers[cmd]; } }, __ccShellFlags: flags };
+    w.top = w;
+    vm.runInContext(src, vm.createContext({ window: w, document: { addEventListener() {} }, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder, Math, Number, setTimeout, setInterval, clearInterval, Promise }));
+    return { b: w.cadcraftDesktop, calls };
+  };
+  const sum = { windowBuiltMs: 420, firstRequestMs: 380, pageLoadedMs: 900, moduleRunningMs: 1500, firstPaintMs: 2100, totalMs: 2100, windowWithinBudget: true, usableWithinBudget: true };
+  const { b, calls } = mk({ suite: true }, { cc_startlog_summary: JSON.stringify(sum), cc_startlog_text: 'CadCraft Studio start-up log.\n+ 0 ms [main] run: begin', cc_startlog_mark: true, cc_popup_restore: ['Toolbox', 7] });
+  ok(b.startLog && Object.keys(b.startLog).sort().join() === 'mark,summary,text' && Object.isFrozen(b.startLog), 'startLog: mark, summary, text, frozen');
+  ok((await b.startLog.summary()).totalMs === 2100 && (await b.startLog.summary()).usableWithinBudget === true, 'summary parses the shell\'s one line of JSON');
+  ok(/^CadCraft Studio start-up log/.test(await b.startLog.text()) && (await b.startLog.mark('first drawing paint')) === true, 'text and mark');
+  await b.startLog.text(true);
+  ok(calls.some((c) => c[0] === 'cc_startlog_mark' && c[1].stage === 'first drawing paint') && calls.some((c) => c[0] === 'cc_startlog_text' && c[1].previous === true), 'the calls carry the stage and the "previous" flag');
+  ok((await mk({ suite: true }, { cc_startlog_summary: 'not json' }).b.startLog.summary()) === null, 'a broken summary is null, not a throw');
+  ok((await b.popups.restore()).join() === 'Toolbox,7', 'popups.restore lists the block titles as strings');
+  ok(Array.isArray(await mk({}, {}).b.popups.restore()) && (await mk({}, {}).b.popups.restore()).length === 0, 'nothing out: an empty list');
+  ok(/if \(mobile\) delete bridge\.popups/.test(src), 'no pop-up list on tablets (the tablet bridge has one web view)');
+  const lib = fs.readFileSync(path.join(HERE, '../src-tauri/src/lib.rs'), 'utf8');
+  ok(['windows::cc_popup_restore,', 'windows::cc_startlog_mark,', 'windows::cc_startlog_summary,', 'windows::cc_startlog_text,'].every((c) => lib.includes(c)), 'the four commands are registered in lib.rs');
 }
 
 // The Scan button's network scanners (Super 0.1, scanner.rs): browse() and request() over the shell's framed answer

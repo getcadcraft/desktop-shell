@@ -22,6 +22,8 @@
  *   windows.open({app, paths?, search?}) → {id}  windows.list() → [{id, app, title, focused}]  windows.focus(id)
  *   windows.focusHub()  windows.onChange(cb({type: opened|closed|focus, id}))      suite mode only (Studio; hub opens)
  *   windows.closeSelf()  (an app window closes itself; the hub is closed by the person)
+ *   startLog {mark(stage), summary() → {windowBuiltMs, firstRequestMs, pageLoadedMs, moduleRunningMs, firstPaintMs, totalMs, …Budget}, text(previous)}  (0.10 PERF.18)
+ *   popups.restore() → [block title]  the torn-off windows that were out when this window last closed (0.10 UI.4; computers only)
  *   windows.launchApps() → [slug] (each once)   windows.onLaunchApp(cb(slug))   hub only: the per-app shortcuts
  *     ("CadCraft", … in the Start menu / app menu, `--app=<slug>`, SD.6) open Studio straight into that app
  *   control.start() → {url, port, token}  control.stop()  control.server() → {running, url, port, token}
@@ -34,6 +36,10 @@
  *   scanners {browse(ms) → [{id, name, host, port, rs, sources, colors, formats}], request(id, method, path, body) → {status, headers, body}}
  *                 (Super 0.1 Scan button, scanner.rs: eSCL scanners found by mDNS `_uscan._tcp`, private addresses, paths under the
  *                 scanner's eSCL root only; computers with the live feature)
+ *   devices (3D mice and MIDI controllers, devices.rs, 0.8 ID.8; Studio on computers): hidList() → [{id, vendorId, productId,
+ *     productName, usagePage, usage}] (multi-axis controllers only), hidBlocked() → n, hidRule() → text, hidOpen/hidClose(id),
+ *     hidRecv(id) → [{reportId, bytes}], midiList() → [{id, name, manufacturer}], midiOpen/midiClose(id), midiRecv(id) → [{bytes, t}];
+ *     input only; an unplugged device answers an error with code 'gone'
  *   renderNodes (LAN render nodes, render_nodes.rs, 0.7 CU.7; Studio's app windows on computers; the shell finds nodes and
  *     carries bytes, the pages do the handshake): advertise(tag) → stopAdvertising() → onConnection(cb(transport)) →
  *     browse() → [{tag, name, host, port}] · onNodes(cb(list)) → unsubscribe · connect({host, port}) → transport
@@ -471,6 +477,36 @@
     }),
     renderNodes,
     engines,
+    // The start-up log (0.9 FX.29, 0.10 PERF.18): `summary()` = this start's stages in milliseconds + the budget answers (window under 1 s,
+    // usable under 3 s), `text(previous)` = the log's words for Copy / Save in About; `mark(stage)` lets the page report the two stages
+    // only it knows ("app module running", "first drawing paint"; anything else is refused, each is written once).
+    startLog: Object.freeze({
+      mark: async (stage) => !!(await call('cc_startlog_mark', { stage: String(stage) })),
+      summary: async () => { try { return JSON.parse(await call('cc_startlog_summary')); } catch (e) { return null; } },
+      text: async (previous = false) => String((await call('cc_startlog_text', { previous: !!previous })) || ''),
+    }),
+    // Torn-off windows (0.10 UI.4, popup_places.rs): the shell puts each pop-up back where it was (keyed by app + the title the page
+    // gives the window) and, here, says which block titles were out when this app window last closed (each once), so the page can open
+    // them again at start without a click.
+    popups: Object.freeze({
+      restore: async () => { const l = await call('cc_popup_restore'); return Array.isArray(l) ? l.map(String) : []; },
+    }),
+    // 3D mice and MIDI controllers (0.8 ID.8, devices.rs; computers only). Bytes only, input only; the shell lists only multi-axis
+    // controllers (HID usage page 1, usage 8). The page's assets/js/app-devices-studio.js turns this into navigator.hid and
+    // navigator.requestMIDIAccess where the web view has neither. hidBlocked(): 3D mice this computer does not let the person
+    // read yet (Linux without the udev rule); hidRule() is that rule file's text, so the page can say what to do and offer the file.
+    devices: Object.freeze({
+      hidList: async () => { const l = await call('cc_hid_list'); return Array.isArray(l) ? l : []; },
+      hidBlocked: async () => Number(await call('cc_hid_blocked')) || 0,
+      hidRule: async () => String((await call('cc_hid_rule')) || ''),
+      hidOpen: (id) => call('cc_hid_open', { id: String(id) }),
+      hidClose: (id) => call('cc_hid_close', { id: String(id) }),
+      hidRecv: (id) => call('cc_hid_recv', { id: String(id) }),
+      midiList: async () => { const l = await call('cc_midi_list'); return Array.isArray(l) ? l : []; },
+      midiOpen: (id) => call('cc_midi_open', { id: String(id) }),
+      midiClose: (id) => call('cc_midi_close', { id: String(id) }),
+      midiRecv: (id) => call('cc_midi_recv', { id: String(id) }),
+    }),
     // Printing (0.7 D7.20, print.rs): the system's printers, and a plotted sheet sent to one. `accepts` says what to send:
     // 'pdf' (CUPS: Linux, macOS) or 'png' (Windows prints an image through .NET).
     printers: Object.freeze({
@@ -512,6 +548,8 @@
   if (flags.suite !== true || flags.live !== true || mobile) delete bridge.renderNodes;   // computers only (CU.7)
   if (flags.live !== true || mobile) delete bridge.scanners;   // computers with the mDNS code (scanner.rs is cfg(all(feature = "live", desktop)))
   if (mobile) delete bridge.engines;   // no outside programs on tablets (RE.3)
+  if (mobile) delete bridge.popups;   // pop-ups are real windows on computers only (UI.4)
+  if (mobile || flags.suite !== true) delete bridge.devices;   // Studio on computers only (ID.8; devices.rs is cfg(desktop))
   if (flags.suite !== true || flags.live !== true) delete bridge.live;
   else if (flags.account === false && bridge.live) { const { signIn, ...rest } = bridge.live; bridge.live = Object.freeze(rest); }   // eslint-disable-line no-unused-vars
   Object.defineProperty(window, 'cadcraftDesktop', { value: Object.freeze(bridge), enumerable: true });
@@ -541,6 +579,19 @@
   {
     const hook = linksOut(true);
     const install = () => { if (document.__ccLinksOut) return; document.__ccLinksOut = true; hook(document); };
+    install();
+    document.addEventListener('DOMContentLoaded', install);
+  }
+
+  // `<a download>` of the page's own data (blob:, data:) on computers too (0.10 FX.311, suggestion #1827: CadCraft's
+  // Download PDF froze Studio on Linux under KDE Plasma / Wayland). Such a click went down the web view's own download
+  // path, which ends in lib.rs on_download and a synchronous Save dialog on the UI thread; a GTK dialog run that way
+  // inside WebKitGTK's download decision hung the window. Here the page's save dialog (cc_save_dialog, which waits off
+  // the UI thread) takes the blob instead, as on tablets, so the shell's download handler is left for downloads the
+  // page did not make itself.
+  {
+    const hook = saveDownloads(bridge);
+    const install = () => { if (document.__ccSaveDownloads) return; document.__ccSaveDownloads = true; hook(document); };
     install();
     document.addEventListener('DOMContentLoaded', install);
   }
@@ -838,10 +889,13 @@
    *  Downloads folder of its own. Blobs are remembered when made, since pages often revoke the URL right after click(). */
   function saveDownloads(b) {
     const blobs = new Map();
-    const create = URL.createObjectURL;
-    const revoke = URL.revokeObjectURL;
-    URL.createObjectURL = function (o) { const u = create.call(URL, o); if (o instanceof Blob) blobs.set(u, o); return u; };
-    URL.revokeObjectURL = function (u) { revoke.call(URL, u); setTimeout(() => blobs.delete(u), 60000); };
+    const hasBlob = typeof Blob === 'function';
+    if (typeof URL === 'function' && typeof URL.createObjectURL === 'function') {
+      const create = URL.createObjectURL;
+      const revoke = URL.revokeObjectURL;
+      URL.createObjectURL = function (o) { const u = create.call(URL, o); if (hasBlob && o instanceof Blob) blobs.set(u, o); return u; };
+      URL.revokeObjectURL = function (u) { revoke.call(URL, u); setTimeout(() => blobs.delete(u), 60000); };
+    }
     const ours = (a) => !!a && a.hasAttribute('download') && /^(blob|data):/i.test(a.href || '');
     const save = async (a) => {
       const href = a.href;
@@ -850,11 +904,15 @@
       const path = await b.saveDialog({ defaultPath: name });
       if (path) await b.writeFile(path, new Uint8Array(await blob.arrayBuffer()));
     };
-    const click = HTMLAnchorElement.prototype.click;
-    HTMLAnchorElement.prototype.click = function () {
-      if (ours(this) && !this.isConnected) { save(this).catch(() => {}); return; }
-      return click.call(this);
-    };
+    // Pages often append the anchor, click() it and remove it at once: the programmatic click is taken here too
+    // (a detached anchor's click() never reaches the document's listeners).
+    if (typeof HTMLAnchorElement === 'function' && HTMLAnchorElement.prototype) {
+      const click = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (ours(this) && !this.isConnected) { save(this).catch(() => {}); return; }
+        return click.call(this);
+      };
+    }
     return (d) => d.addEventListener('click', (e) => {
       const a = e.target && e.target.closest ? e.target.closest('a[download]') : null;
       if (!ours(a)) return;

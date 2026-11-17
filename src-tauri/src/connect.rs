@@ -18,10 +18,11 @@ const TABLE: &[(&str, &str, &str, &str, &str)] = &[
     ("windsurf", "{home}/.codeium/windsurf", "{home}/.codeium/windsurf", "{home}/.codeium/windsurf", "mcp_config.json"),
     ("vscode", "{appdata}/Code/User", "{home}/Library/Application Support/Code/User", "{xdgConfig}/Code/User", "mcp.json"),
     ("codex", "{home}/.codex", "{home}/.codex", "{home}/.codex", "config.toml"),
+    ("antigravity", "{home}/.gemini/config", "{home}/.gemini/config", "{home}/.gemini/config", "mcp_config.json"),
     ("gemini", "{home}/.gemini", "{home}/.gemini", "{home}/.gemini", "settings.json"),
 ];
 /// Programs `which` may look for.
-const PROGRAMS: &[&str] = &["claude", "codex", "gemini", "code"];
+const PROGRAMS: &[&str] = &["antigravity", "claude", "codex", "gemini", "code"];
 /// The only command lines `run` may start (Claude Code's own `claude mcp`): add, remove, list.
 const RUNS: &[&[&str]] = &[
     &["mcp", "add", "cadcraft", "--scope", "user", "--", "npx", "-y", "@getcadcraft/mcp", "connect"],

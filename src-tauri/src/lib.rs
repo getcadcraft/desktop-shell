@@ -57,6 +57,12 @@ mod engines;
 // A Modbus TCP socket on this computer for the Material flow add-on's PLC emulation (0.8 SU.858 step 5): plc.rs, std-only core tested alone.
 #[cfg(desktop)]
 mod plc;
+// 3D mice and MIDI controllers for the page layer's WebHID / Web MIDI doors (0.8 ID.8): devices.rs, bytes only, input only.
+#[cfg(desktop)]
+mod devices;
+// Torn-off windows remembered per monitor and offered back at start (0.10 UI.4): popup_places.rs (std-only core), glue in windows.rs.
+#[cfg(desktop)]
+mod popup_places;
 #[cfg(desktop)]
 mod updates;
 mod windows;
@@ -153,11 +159,36 @@ pub(crate) fn keep_on_screen<R: Runtime>(w: &tauri::WebviewWindow<R>) {
 }
 
 /// Downloads (an app's "Export", "Download PDF", …): ask where to save, like any desktop program. Runs on the UI
-/// thread, so it uses rfd's own synchronous dialog (the dialog plugin's blocking calls would wait on this thread).
-/// Tablets: the bridge turns `<a download>` into the save picker itself (bridge.js).
+/// thread. Windows and macOS: rfd's own synchronous dialog (the dialog plugin's blocking calls would wait on this
+/// thread). Linux (0.10 FX.311, suggestion #1827): that synchronous GTK dialog, run inside WebKitGTK's download
+/// decision, hung the whole window under KDE Plasma / Wayland ("not responding" on Download PDF in CadCraft), so there
+/// the file is taken into a temporary folder first and, once it has arrived, the dialog plugin asks where to keep it
+/// (the callback form: the dialog runs in the GLib loop, nothing waits on this thread) and the file is moved there.
+/// The bridge saves `<a download>` of blob:/data: URLs itself on every platform now, so this path is left for
+/// downloads the page did not make (a file from the site). Tablets: the bridge alone (bridge.js).
 #[cfg(desktop)]
 fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) -> bool {
     match event {
+        #[cfg(target_os = "linux")]
+        DownloadEvent::Requested { destination, .. } => match download_spool(destination) {
+            Some(p) => {
+                *destination = p;
+                true
+            }
+            None => false,
+        },
+        #[cfg(target_os = "linux")]
+        DownloadEvent::Finished { path, success, .. } => {
+            if let Some(p) = path {
+                if success {
+                    download_keep(webview, p);
+                } else {
+                    let _ = std::fs::remove_file(&p);
+                }
+            }
+            true
+        }
+        #[cfg(not(target_os = "linux"))]
         DownloadEvent::Requested { destination, .. } => {
             let mut d = rfd::FileDialog::new().set_title("Save");
             if let Some(n) = destination.file_name() {
@@ -181,8 +212,67 @@ fn on_download<R: Runtime>(webview: Webview<R>, event: DownloadEvent<'_>) -> boo
                 None => false,
             }
         }
-        DownloadEvent::Finished { .. } => true,
         _ => true,
+    }
+}
+
+/// Linux (FX.311): where a download lands before the person is asked — a fresh name under a folder of ours in the
+/// temporary directory, so two downloads of the same name never meet. None = the folder cannot be made (the download
+/// is then refused, as a cancelled dialog refuses it).
+#[cfg(all(desktop, target_os = "linux"))]
+fn download_spool(suggested: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join("cadcraft-studio-downloads");
+    std::fs::create_dir_all(&dir).ok()?;
+    let name = suggested
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| !n.is_empty() && n != "." && n != "..")
+        .unwrap_or_else(|| "download".to_string());
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (name[..i].to_string(), name[i..].to_string()),
+        _ => (name.clone(), String::new()),
+    };
+    let mut p = dir.join(&name);
+    let mut n = 2;
+    while p.exists() {
+        p = dir.join(format!("{stem} ({n}){ext}"));
+        n += 1;
+        if n > 10_000 {
+            return None;
+        }
+    }
+    Some(p)
+}
+
+/// Linux (FX.311): the file has arrived in the spool; ask where to keep it, off the UI thread, and move it there.
+/// Cancelled = the spooled file is removed. A move across file systems falls back to copy + remove.
+#[cfg(all(desktop, target_os = "linux"))]
+fn download_keep<R: Runtime>(webview: Webview<R>, from: std::path::PathBuf) {
+    use tauri_plugin_dialog::DialogExt;
+    let app = webview.app_handle().clone();
+    let window = webview.window();
+    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "download".to_string());
+    let mut d = app.dialog().file().set_title("Save").set_file_name(&name).set_parent(&window);
+    if let Some(home) = std::env::var_os("HOME") {
+        let dl = std::path::Path::new(&home).join("Downloads");
+        d = d.set_directory(if dl.is_dir() { dl } else { std::path::PathBuf::from(home) });
+    }
+    let answer = files::test_answer();
+    let keep = move |dst: Option<std::path::PathBuf>| match dst {
+        Some(dst) => {
+            let moved = std::fs::rename(&from, &dst).or_else(|_| std::fs::copy(&from, &dst).map(|_| ()).and_then(|_| std::fs::remove_file(&from)));
+            match moved {
+                Ok(()) => app.state::<files::Grants>().grant_file(&dst),
+                Err(e) => eprintln!("cadcraft: download could not be kept at {}: {e}", dst.display()),
+            }
+        }
+        None => {
+            let _ = std::fs::remove_file(&from);
+        }
+    };
+    match answer {
+        Some(a) => keep(a.and_then(|v| v.into_iter().next())),
+        None => d.save_file(move |picked| keep(picked.and_then(|f| f.into_path().ok()))),
     }
 }
 
@@ -232,6 +322,7 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             std::thread::spawn(move || {
+                startlog::mark_once("first page request served");
                 let site = app.state::<protocol::Site>();
                 responder.respond(protocol::respond(&site, &request));
             });
@@ -365,6 +456,31 @@ pub fn run() {
             #[cfg(desktop)]
             plc::cc_plc_disconnect,
             #[cfg(desktop)]
+            windows::cc_popup_restore,
+            windows::cc_startlog_mark,
+            windows::cc_startlog_summary,
+            windows::cc_startlog_text,
+            #[cfg(desktop)]
+            devices::cc_hid_list,
+            #[cfg(desktop)]
+            devices::cc_hid_blocked,
+            #[cfg(desktop)]
+            devices::cc_hid_rule,
+            #[cfg(desktop)]
+            devices::cc_hid_open,
+            #[cfg(desktop)]
+            devices::cc_hid_close,
+            #[cfg(desktop)]
+            devices::cc_hid_recv,
+            #[cfg(desktop)]
+            devices::cc_midi_list,
+            #[cfg(desktop)]
+            devices::cc_midi_open,
+            #[cfg(desktop)]
+            devices::cc_midi_close,
+            #[cfg(desktop)]
+            devices::cc_midi_recv,
+            #[cfg(desktop)]
             ask_keys::cc_ask_key_set,
             #[cfg(desktop)]
             ask_keys::cc_ask_key_has,
@@ -429,8 +545,12 @@ pub fn run() {
             #[cfg(all(feature = "live", desktop))]
             scanner::cc_scanner_request,
         ])
-        // A window's end also ends its Studio Live session (studio_live.rs).
+        // A window's end also ends its Studio Live session (studio_live.rs) and closes the input devices it had open (devices.rs).
         .on_window_event(|_w, _e| {
+            #[cfg(desktop)]
+            if matches!(_e, tauri::WindowEvent::Destroyed) {
+                devices::on_window_destroyed(_w.app_handle(), _w.label());
+            }
             #[cfg(feature = "live")]
             if matches!(_e, tauri::WindowEvent::Destroyed) {
                 studio_live::on_window_destroyed(_w.app_handle(), _w.label());
@@ -462,6 +582,10 @@ pub fn run() {
             app.manage(plc::Hub::default());
             #[cfg(desktop)]
             app.manage(plc::Client::default());
+            #[cfg(desktop)]
+            app.manage(devices::Devices::default());
+            #[cfg(desktop)]
+            app.manage(popup_places::PopupState::new(portable::data_file(app.handle(), "popup-windows.txt")));
             #[cfg(desktop)]
             app.manage(control::Control::default());
             startlog::mark("setup: config read, windows, protocol and engine state managed");
@@ -573,6 +697,9 @@ fn desktop_main_window<R: Runtime>(app: &AppHandle<R>, title: &str, suite: bool)
         let h = app.clone();
         main.on_window_event(move |e| {
             // A portable copy has no window-state plugin (places.json instead): saving through it would find no state.
+            if matches!(e, tauri::WindowEvent::CloseRequested { .. }) {
+                windows::popup_opener_closing(&h, "main");
+            }
             if !portable::is_portable() && matches!(e, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
                 let n = PLACE_CHANGES.fetch_add(1, Ordering::Relaxed) + 1;
                 let h = h.clone();
@@ -617,6 +744,7 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
     let handle = app.clone();
     let popup_handle = app.clone();
     let popup_title = title.to_string();
+    let opener_label = label.to_string();
     let b = WebviewWindowBuilder::new(app, label, url);
     // Portable (D7.53): one profile folder beside the program for every window (WebView2 wants the same one for all).
     let b = match portable::webview_dir() {
@@ -633,6 +761,12 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
                     tauri::webview::PageLoadEvent::Started => startlog::mark("main page started loading"),
                     tauri::webview::PageLoadEvent::Finished => startlog::page_loaded(),
                 }
+            } else if w.label().starts_with("app-") {
+                // 0.10 PERF.18: one line per app window (its label only: app-cadcraft-2), so a slow second window shows too.
+                match p.event() {
+                    tauri::webview::PageLoadEvent::Started => startlog::mark(&format!("window {} page started loading", w.label())),
+                    tauri::webview::PageLoadEvent::Finished => startlog::mark(&format!("window {} page finished loading", w.label())),
+                }
             }
         })
         // window.open: the app's own pop-ups (the movable panels' second-monitor window is a same-origin about:blank the
@@ -644,6 +778,7 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
                 return NewWindowResponse::Deny;
             }
             let label = format!("popup-{}", POPUPS.fetch_add(1, Ordering::Relaxed));
+            let opener_t = opener_label.clone();
             // Built on about:blank: the engine loads the asked-for page into the window it is handed (WebView2's NewWindow
             // must not have navigated; built on the page itself, a hand-off between apps — BimCraft's Takeoff into
             // TakeoffCraft — closed Studio on Windows, 0.6 Discord report). Tauri's own on_new_window example does the same.
@@ -655,9 +790,11 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
             match pb
                 .window_features(features)
                 .title(&popup_title)
-                .on_document_title_changed(|w, t| {
+                .on_document_title_changed(move |w, t| {
                     if !t.is_empty() {
                         let _ = w.set_title(&t);
+                        // UI.4: the page's title names the block: put the window back where it was last (windows.rs).
+                        windows::popup_titled(&w, &opener_t, &t);
                     }
                 })
                 .on_download(on_download)
@@ -666,6 +803,7 @@ pub(crate) fn app_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &str, url
                 Ok(window) => {
                     keep_on_screen(&window);
                     close_with_page(&window);
+                    windows::popup_hook(&window, &opener_label);
                     NewWindowResponse::Create { window }
                 }
                 Err(_) => NewWindowResponse::Deny,

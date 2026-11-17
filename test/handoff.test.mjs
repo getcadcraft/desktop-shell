@@ -67,4 +67,45 @@ t('FX.29: every start-up stage is logged, the last start is kept, a watchdog and
   assert.doesNotMatch(lib, /startlog::mark\(&format!\([^)]*(path|file|token|args|argv)/i);
 });
 
+// ---- 0.10 UI.4: torn-off windows as real Studio windows, remembered per monitor ----
+const places = src('popup_places.rs');
+t('UI.4: the pop-up hand-off still builds the window on about:blank (0.6 crash) and every pop-up goes through popup_hook', () => {
+  assert.match(lib, /WebviewUrl::External\("about:blank"\.parse\(\)\.expect\("about:blank"\)\)/);
+  assert.match(lib, /NewWindowResponse::Create \{ window \}/);
+  assert.match(lib, /close_with_page\(&window\);\s*windows::popup_hook\(&window, &opener_label\)/);
+  assert.match(lib, /windows::popup_titled\(&w, &opener_t, &t\)/);
+});
+t('UI.4: the place file holds the app, the block title and numbers only; the state is managed on desktop', () => {
+  assert.match(lib, /mod popup_places;/);
+  assert.match(lib, /app\.manage\(popup_places::PopupState::new\(portable::data_file\(app\.handle\(\), "popup-windows\.txt"\)\)\)/);
+  assert.match(places, /std-only on purpose/);
+  assert.doesNotMatch(places.split('#[cfg(test)]')[0], /use (tauri|serde)/);
+});
+t('UI.4: an app window\'s close (the hub, an app window) closes its pop-ups and notes them to be offered back', () => {
+  assert.match(lib, /CloseRequested \{ \.\. \}\) \{\s*windows::popup_opener_closing\(&h, "main"\)/);
+  assert.match(windows, /popup_opener_closing\(&h, &l\);/);
+  assert.match(windows, /fn popup_opener_closing[\s\S]{0,400}w\.close\(\)/);
+});
+t('UI.4: the page asks cc_popup_restore (registered, desktop only); the four new commands are registered', () => {
+  for (const c of ['windows::cc_popup_restore,', 'windows::cc_startlog_mark,', 'windows::cc_startlog_summary,', 'windows::cc_startlog_text,']) assert.ok(lib.includes(c), c);
+  assert.match(windows, /#\[cfg\(desktop\)\]\s*#\[tauri::command\]\s*pub fn cc_popup_restore/);
+});
+t('UI.4: a place is applied only when a connected screen still shows it', () => {
+  assert.match(windows, /if !p\.shown_on\(&mons\(window\)\)/);
+});
+
+// ---- 0.10 PERF.18: the start-up log a person can send ----
+t('PERF.18: the log gains the first page request, one line per app window, and the two stages only the page knows', () => {
+  assert.match(lib, /startlog::mark_once\("first page request served"\)/);
+  assert.match(lib, /window \{\} page started loading/);
+  assert.match(startlog, /PAGE_STAGES: \[&str; 2\] = \["app module running", "first drawing paint"\]/);
+  assert.match(windows, /startlog::page_stage\(caller\.label\(\), &stage\)/);
+  assert.match(windows, /startlog::mark\(&format!\("app window \{label\} built"\)\)/);
+});
+t('PERF.18: the summary carries the budget (window under 1 s, usable under 3 s) and the text is capped at 64 kB', () => {
+  assert.match(startlog, /BUDGET_WINDOW_MS: u128 = 1000/);
+  assert.match(startlog, /BUDGET_USABLE_MS: u128 = 3000/);
+  assert.match(startlog, /65536/);
+});
+
 console.log(`\n${n} passed`);

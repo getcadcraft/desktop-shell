@@ -20,6 +20,13 @@ desktop-shell/
                         Windows' own route for an MSIX (package.rs); always asks; last check kept for Settings › Updates
     src/package.rs      0.7 MSIX: package identity, App Installer (website package) and StoreContext (Store) updates
     src/windows.rs      suite mode (Studio): the hub + app windows, per-app window places
+                        0.10: also the pop-up glue (popup_hook / popup_titled / cc_popup_restore) and the start-up log commands
+                        (cc_startlog_mark / _summary / _text)
+    src/popup_places.rs 0.10 UI.4: torn-off windows remembered per monitor (key = app + the title the page gives the window),
+                        put back on the next start if a connected screen still shows the place, closed with their app window
+                        and offered back (cadcraftDesktop.popups.restore); std-only core, tested alone with rustc --test
+    src/startlog.rs     the start-up log (0.9 FX.29; 0.10 PERF.18: first page request, a line per app window, the two page stages,
+                        summary() with the budget, text() for About's Copy / Save)
     src/control.rs      Studio's local MCP server (X.5): 127.0.0.1, token, Origin/Host rules → the hub window
     src/links.rs        Studio: ccstudio://join/… invite links and --app=<slug> shortcuts, handed to the hub (0.5)
     src/carry.rs        Studio's first start: the separate 0.4 apps' data comes over (0.5 SD.8; page bridge/carry.html)
@@ -66,7 +73,11 @@ desktop-shell/
   native open/save/folder dialogs, `readFile`, `writeFile` (temp file + rename), `stat`, `listDir`, `launchFiles`,
   `onOpenFiles`, `info`. The shell refuses any path the person did not open, save, or pick a folder for
   (`not_allowed`); grants are remembered in the app's data folder so recent files reopen after a restart.
-- **Downloads** (apps that still use `<a download>`) open a "Save as" dialog instead of landing in Downloads.
+- **Downloads** (apps that still use `<a download>`) open a "Save as" dialog instead of landing in Downloads. The page's
+  own data (blob:, data:) is saved by the bridge through the page's save dialog (`cc_save_dialog`, off the UI thread);
+  on Linux a download the page did not make (a file from the site) lands in a temporary folder first and the dialog
+  plugin asks where to keep it once it has arrived (0.10 FX.311: the synchronous dialog inside WebKitGTK's download
+  decision froze the window under Wayland). Windows and macOS keep rfd's synchronous dialog for those.
 - **Links** that leave the app open in the person's browser. The app's own pop-ups (the panels window) are real windows.
 - **Double-click** a file while the app runs: the second start hands the path to the running window and exits.
 - **Element fullscreen** (the app bar's screen modes) takes the window fullscreen with it. On macOS the page's request
@@ -109,6 +120,14 @@ windows, the assistants' local MCP server, carrying 0.4 per-app data.
   `~/.local/share/com.getcadcraft.studio/`) and keeps the start before as `startup.previous.log`: one line per stage, a line when the main page
   has not finished loading 20 s after the window was built, and any panic. No file names, passwords or account data. Ask a person whose
   Studio will not start for both files.
+  0.10 (PERF.18) adds the first page request, a line per app window (`app-cadcraft-2 page finished loading`), and the two stages only the
+  page knows (`cadcraftDesktop.startLog.mark('app module running')`, `…('first drawing paint')`; nothing else a page sends is written).
+  `cadcraftDesktop.startLog.summary()` answers the stages in milliseconds and the budget (window under 1 s, app usable under 3 s warm);
+  `startLog.text(previous)` is the log's words for About's Copy / Save.
+- **Torn-off windows (0.10 UI.4).** A block torn off in an app window is a real window (the pop-up is built on `about:blank`, the engine
+  loads the page into it). Its place is kept in `popup-windows.txt` beside the log (app, block title, four numbers; nothing else), put
+  back on the next start if a connected screen still shows it, and the pop-ups close with their app window; `cadcraftDesktop.popups.restore()`
+  lists the block titles that were out, once, so the page can open them again without a click. Hand test on two monitors: below.
 - `node test/handoff.test.mjs` checks these are wired (source contracts; what a build must show is in docs/0.9-sessions/studio-fix-09.md).
 
 ## Build

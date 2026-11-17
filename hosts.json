@@ -1,0 +1,48 @@
+{
+  "_comment": "NET.3 (Lucas, Discord 2026-11-12): the hosts each app's pages may reach with fetch/XHR in the desktop app. build.mjs --strict-hosts turns this into a Content-Security-Policy connect-src header in shell.json (hosts.mjs; the Rust protocol handler already sends shell.json headers with every page). Only connect-src is set: links, images, fonts and frames are not changed. Studio (the suite) gets every app's list. test/hosts.test.mjs scans each app's source and fails when a request URL names a host that is in neither `apps` nor `reference`. Keep `why` true: name the file that makes the request.",
+  "always": {
+    "getcadcraft.com": "the Library, sign-in pages, Hailey, the add-on list, the hardware report (when on), help",
+    "cdn.getcadcraft.com": "site media and downloads (CDN_MEDIA)"
+  },
+  "apps": {
+    "cadcraft": {
+      "earthquake.usgs.gov": "seismic loads (frame/seismic-asce7.js)",
+      "cdn.proj.org": "datum shift grids (crs.js GRID_CDN)"
+    },
+    "bimcraft": {
+      "earthquake.usgs.gov": "seismic design values, ASCE 7-16/7-22 (frame/seismic-asce7.js, frame/loads-sources.js)",
+      "power.larc.nasa.gov": "solar and temperature climatology for a site (data-packs.js)",
+      "re.jrc.ec.europa.eu": "PVGIS monthly irradiation for a site (data-packs.js)",
+      "cdn.proj.org": "datum shift grids (crs.js GRID_CDN)"
+    },
+    "modelcraft": {},
+    "markupcraft": {},
+    "takeoffcraft": {},
+    "civilcraft": {
+      "cdn.proj.org": "datum shift grids (crs.js GRID_CDN)",
+      "epqs.nationalmap.gov": "USGS ground elevation (addons/site-usgs-elevation)",
+      "overpass-api.de": "OpenStreetMap buildings (addons/site-osm-buildings)",
+      "sdmdataaccess.sc.egov.usda.gov": "USDA soil at a point (addons/site-ssurgo-soil)",
+      "hazards.fema.gov": "FEMA flood zones (addons/site-fema-flood)"
+    },
+    "detailcraft": {
+      "earthquake.usgs.gov": "seismic loads (frame/seismic-asce7.js)"
+    },
+    "partcraft": {}
+  },
+  "addons": {
+    "own-ai-key": {
+      "api.anthropic.com": "the person's own AI key (addons/own-ai-key)",
+      "api.openai.com": "the person's own AI key (addons/own-ai-key)"
+    }
+  },
+  "_not_covered": "Servers the person types in are not on any list: CivilCraft map servers (WMS/WMTS/ArcGIS in gis-map-ui.js) and anything an add-on added later from the Library reaches. With --strict-hosts those requests are refused, which is why the flag is off by default until a per-person 'also allow' list exists in the shell.",
+  "reference": [
+    "www.w3.org", "schemas.openxmlformats.org", "schemas.microsoft.com", "schemas.hp.com", "purl.org", "www.opengis.net", "www.landxml.org", "www.collada.org",
+    "creativecommons.org", "example.org", "tile.example.org", "example.com", "lims.example.com", "bms.example.com", "broker.example.com", "sim.local",
+    "github.com", "raw.githubusercontent.com", "grid.space", "wiki.bambulab.com", "www.iso.org", "www.asme.org", "www.din.de", "www.aisc.org",
+    "www.steelforlifebluebook.co.uk", "www.tuspipe.com", "www.tenaris.com", "www.csiresources.org", "www.rics.org", "www.gobrick.com", "www.chronimo.de",
+    "www.aseptconn.ch", "uniclass.thenbs.com", "tecarvepipes.com", "law.resource.org", "assets.alfalaval.com", "aaqs.org", "www.openfoam.com", "openfoam.org",
+    "code-aster.org", "apps.nationalmap.gov", "download.geofabrik.de", "spacedata.copernicus.eu", "s3-eu-west-1.amazonaws.com", "d347awuzx0kdse.cloudfront.net"
+  ]
+}

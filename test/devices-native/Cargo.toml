@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# 0.8 ID.8: src-tauri/src/devices.rs's macOS / Windows side (hidapi + midir) without Tauri, to try on a real computer:
+#   RUSTFLAGS="--cfg standalone --cfg native_check" cargo run            lists 3D mice and MIDI inputs
+#   RUSTFLAGS="--cfg standalone --cfg native_check" cargo run -- read    then reads the first of each for 10 seconds
+# Not part of the shell's build (its own workspace); the dependency lines must match src-tauri/Cargo.toml.
+[package]
+name = "devices-native"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["macos-shared-device"] }
+midir = { version = "0.10", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+midir = { version = "0.10", default-features = false }

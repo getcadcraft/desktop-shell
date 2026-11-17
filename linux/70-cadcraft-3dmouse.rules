@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# CadCraft Studio (0.8 ID.8): let the person sitting at this computer read their 3D mouse.
+#
+# Linux gives the raw HID nodes (/dev/hidraw*) to root only. These lines hand the node of a 3D mouse to whoever is logged in at
+# the seat (the "uaccess" tag), and to nobody else. Only the 3D mouse maker's own devices are named: the vendor id 256f, and
+# the older models that were sold under the vendor id 046d. No keyboard, mouse or other device is touched.
+#
+# The .deb installs it as /usr/lib/udev/rules.d/70-cadcraft-3dmouse.rules (stores/linux/build.mjs). With another package
+# (AppImage, a tar), Studio's Settings offers this file to save; then:
+#   sudo cp 70-cadcraft-3dmouse.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# and unplug the 3D mouse and plug it in again. Keep the name's number below 73 (the seat rules run there).
+
+# USB, wired or through the maker's receiver
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="256f", TAG+="uaccess"
+# Bluetooth
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", KERNELS=="0005:256F:*", TAG+="uaccess"
+# Older models under the vendor id 046d, each by its product id
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c603|c605|c606|c621|c623|c625|c626|c627|c628|c629|c62b", TAG+="uaccess"

@@ -14,5 +14,10 @@
   <true/>
   <key>com.apple.security.network.server</key>
   <true/>
+  <!-- 0.8 ID.8 (src-tauri/src/devices.rs): reading a 3D mouse, wired or on its receiver (usb) or on Bluetooth. Input only. -->
+  <key>com.apple.security.device.usb</key>
+  <true/>
+  <key>com.apple.security.device.bluetooth</key>
+  <true/>
 </dict>
 </plist>
