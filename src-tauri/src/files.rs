@@ -200,6 +200,9 @@ impl Grants {
         let sep = if cfg!(windows) { ['\\', '/'] } else { ['/', '/'] };
         l.files.iter().any(|f| f == &n)
             || l.dirs.iter().any(|d| n == *d || (n.starts_with(d.as_str()) && n[d.len()..].starts_with(sep)))
+            // 0.11 ORS.27: the drawing's own lock file beside a file the person opened (`Plan.dwg` → `Plan.dwg.cclock`),
+            // so "open somewhere else, by whom" works without picking the folder. Only that one sibling.
+            || crate::lock_ops::lock_target(&n).is_some_and(|base| l.files.iter().any(|f| f == base))
     }
 }
 

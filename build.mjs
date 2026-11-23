@@ -759,6 +759,12 @@ for (const slug of slugs) {
   }
   // A test build's http feed on the test machine (the plugin refuses http otherwise). Only --update-test sets this.
   if (UPDATE_TEST) config.plugins = { ...(config.plugins || {}), updater: { ...((config.plugins || {}).updater || { pubkey: updates.pubkey, endpoints: [] }), dangerousInsecureTransportProtocol: true } };
+  if (TARGET === 'linux' && APPS[slug].linuxTypes) {
+    // Linux (opt-in per app: apps.json "linuxTypes": true): the app's OWN types only, each with its own MIME type, so the .deb's desktop entry lists them and
+    // a double-click opens the app. Polite and Open-with types are left to the desktop's own choices (no claim on a type another program has).
+    const f = APPS[slug].files, T = APPS._types;
+    config.bundle.fileAssociations = f.own.map((ext) => ({ ext: [ext], name: T[ext] || `${ext.toUpperCase()} file`, role: 'Editor', mimeType: `application/x-${ext}` }));
+  }
   if (TARGET === 'macos') {
     // macOS registers file types through the bundle's Info.plist (Tauri's fileAssociations; Windows keeps its own polite
     // NSIS hook): own types Owner, polite ones Default (used only when nothing else claims them), the rest Alternate.

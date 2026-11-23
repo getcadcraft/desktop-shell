@@ -6,6 +6,9 @@
 //! methods, five header names, no redirects, 256 MB, 60 s. The machine's key is kept in the OS credential store under the machine's
 //! id; the page sets it and never reads it back: a request carries `X-Api-Key: {{key}}` and this file fills it in.
 //!
+//! 0.11 (studio-11) read against studio/hub/machines.js: paths, headers, methods and the answer layout match; a missing key now
+//! leaves the header out (Moonraker without auth), the Host header carries brackets and the port, and https machines are refused
+//! in the page first (machines.js `plan`/`pingPlan` code `tls`), since this side speaks plain http only.
 //! STATUS: written on the VPS, NOT built (rule 25: no cargo here). To mount it, once, on a machine that can build:
 //!   lib.rs   `mod machines;` and, in `generate_handler![…]`, under `#[cfg(desktop)]`:
 //!            machines::cc_machine_request, machines::cc_machine_key_set, machines::cc_machine_key_has, machines::cc_machine_key_forget
@@ -59,6 +62,13 @@ fn split(url: &str) -> Result<(String, u16, String), String> {
         return Err("not_allowed: that is not a machine upload path".into());
     }
     Ok((host.to_string(), port, path.to_string()))
+}
+
+/// The Host header for the name the person typed (the request goes to the checked address): an IPv6 literal in brackets, the port
+/// when it is not 80 (RFC 9110 § 7.2).
+fn host_header(host: &str, port: u16) -> String {
+    let h = if host.contains(':') { format!("[{host}]") } else { host.to_string() };
+    if port == 80 { h } else { format!("{h}:{port}") }
 }
 
 fn header_ok(name: &str) -> bool {
@@ -147,14 +157,20 @@ pub fn cc_machine_request<R: Runtime>(window: WebviewWindow<R>, suite: tauri::St
         return Err("size: over 256 MB".into());
     }
     let machine = get("x-cc-machine").unwrap_or_default();
-    let mut hdrs: Vec<(String, String)> = vec![("Host".into(), host.clone())];
+    let mut hdrs: Vec<(String, String)> = vec![("Host".into(), host_header(&host, port))];
     for (k, v) in &wanted {
         if !header_ok(k) {
             return Err(format!("not_allowed: header {k}"));
         }
         let v = v.as_str().ok_or("bad header value")?;
         let v = if v == "{{key}}" {
-            key_entry(&machine)?.get_password().map_err(|_| "key: no key is stored for this machine".to_string())?
+            // 0.11 EG.40 (read against machines.js): the drivers put `X-Api-Key: {{key}}` on every OctoPrint / Moonraker / PrusaLink call,
+            // and a Moonraker on a trusted network often has no key at all. No key stored = the header is left out; a machine that wants
+            // one answers 401/403, which the page words as "the machine did not accept the key".
+            match key_entry(&machine)?.get_password() {
+                Ok(k) => k,
+                Err(_) => continue,
+            }
         } else {
             v.to_string()
         };
@@ -221,6 +237,13 @@ mod tests {
         assert!(split("http://192.168.1.40").is_err());
         assert!(split("http://:80/api/version").is_err());
         assert!(split("http://192.168.1.40/machine/file/gcodes/a b.gcode").is_err());
+    }
+
+    #[test]
+    fn host_header_form() {
+        assert_eq!(host_header("printer.local", 80), "printer.local");
+        assert_eq!(host_header("192.168.1.40", 5000), "192.168.1.40:5000");
+        assert_eq!(host_header("fd12::1", 7125), "[fd12::1]:7125");
     }
 
     #[test]

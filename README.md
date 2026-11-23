@@ -26,14 +26,21 @@ desktop-shell/
                         put back on the next start if a connected screen still shows the place, closed with their app window
                         and offered back (cadcraftDesktop.popups.restore); std-only core, tested alone with rustc --test
     src/startlog.rs     the start-up log (0.9 FX.29; 0.10 PERF.18: first page request, a line per app window, the two page stages,
-                        summary() with the budget, text() for About's Copy / Save)
+                        summary() with the budget, text() for About's Copy / Save; 0.11: Studio's hub marks its stages, Settings shows the total)
+    src/sync_badge.rs   0.11 SCF.9: the sync state outside the page (cadcraftDesktop.sync.state from the main window): dock label
+                        (macOS), taskbar overlay dot (Windows), launcher count (Linux, where the desktop has one); std-only core
+    src/live_net.rs     0.11 XE.9: read-only device sockets for live data (cadcraftDesktop.liveNet): Modbus TCP reads, MQTT subscribe,
+                        BACnet Who-Is/ReadProperty; every byte the page sends is checked, a device off the private networks needs a yes;
+                        the protocols are the page's own codecs (lib/live); std-only core, tested alone with rustc --test --cfg standalone
+    src/lock_ops.rs     strict vault locks (0.8 SU.1058); 0.11 ORS.27: a granted file's own `<file>.cclock` is reachable (lock_target)
     src/control.rs      Studio's local MCP server (X.5): 127.0.0.1, token, Origin/Host rules → the hub window
     src/links.rs        Studio: ccstudio://join/… invite links and --app=<slug> shortcuts, handed to the hub (0.5)
     src/carry.rs        Studio's first start: the separate 0.4 apps' data comes over (0.5 SD.8; page bridge/carry.html)
     src/render_nodes.rs LAN render nodes (0.7 CU.7): `_ccrender._tcp` mDNS + a `/render` WebSocket for the pages' own sealed
                         frames; bytes only, private peers only, one at a time (cadcraftDesktop.renderNodes)
     src/portable.rs     the portable zip (0.7 D7.53): shell.json "portable": true → data/ beside the program, the web view's profile there, no updater
-    src/linux.rs        Linux: WEBKIT_DISABLE_DMABUF_RENDERER=1 unless the person set it (no black window; 0.7 D7.57)
+    src/linux.rs        Linux: WEBKIT_DISABLE_DMABUF_RENDERER=1 for NVIDIA / virtual graphics or an unreadable /sys/class/drm,
+                        unless the person set it (no black window, 0.7 D7.57; AMD/Intel keep the fast renderer, FX.145; CC_WEBKIT_DMABUF=1|0)
     src/live/           Studio Live (live-core, live-relay): built with --features live until it is wired in
     gen/android/        the Android project (cargo tauri android init, then edited; committed): CadcraftPlugin.kt,
                         manifest, ProGuard rules, the upload-key signing config
@@ -87,7 +94,7 @@ desktop-shell/
   builds until decision 11) removes sign-in and the cloud; `suite: true` is Studio; `updates {endpoint, pubkey, auto, edition}` only with the owner's key (an MSIX: `edition` alone).
 - **Studio (suite mode):** the hub is the main window and opens each app in windows of its own
   (`cadcraftDesktop.windows.*`); files opened at launch go to the hub, which routes them. The hub can run the local MCP
-  server (`cadcraftDesktop.control.*`), whose rules match `getcadcraft.com/tools/mcp/live-server.mjs`.
+  server (`cadcraftDesktop.control.*`), whose rules match `mcp/live-server.mjs` in the public [getcadcraft/mcp](https://github.com/getcadcraft/mcp) repository (the hub's reference server).
 
 ## Tablets: Studio on Android and iPad (docs/0.5-PART3.md track TB)
 
@@ -139,7 +146,7 @@ node build.mjs cadcraft --edition <dir> # an edition folder packed already
 node build.mjs cadcraft --target linux  # unbundled Linux binary (tests)
 node build.mjs studio --edition <suite> # Studio: hub + eight apps (the studio repo's pack/suite.mjs)
 node build.mjs cadcraft --store --edition <store edition zip>   # store package: no sign-in, no update feed
-node build.mjs cadcraft --edition <zip> --webview2-fixed <extracted cab> --version 0.4.1   # carries WebView2 (~230 MB)
+node build.mjs cadcraft --edition <zip> --webview2-fixed <extracted cab> --version 0.10.1   # carries WebView2 (~230 MB)
 node build.mjs studio --edition <suite> --webview2-fixed <runtime> --portable   # + out/<Name>-<v>-portable.zip: unpack and run, data beside it (portable/layout.mjs)
 node build.mjs studio --edition <suite> --store --msix            # the Store's .msix (packed here; msix/PACK.md)
 node build.mjs studio --edition <suite> --msix                    # the website's .msix + .appinstaller (signed with CC_MSIX_SIGN_COMMAND)

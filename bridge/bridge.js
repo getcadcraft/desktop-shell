@@ -11,6 +11,7 @@
  *   readFile(path) → Uint8Array            writeFile(path, Uint8Array) → undefined (atomic, done by the shell)
  *   createFileExclusive(path, Uint8Array) → true when this call made the file, false when it existed (the OS decides);
  *   removeFile(path) → true when a file was removed (0.8 SU.1058; tablets answer "unsupported")
+ *   deviceName() → this computer's name ('' when unknown; 0.11 ORS.27, the drawing lock's "who")
  *   stat(path) → {size, mtime} | null      listDir(path) → [{name, dir}]  (folders first, then by name)
  *   launchFiles() → paths (each once)      onOpenFiles(cb(paths))          (double-click while running)
  *   info() → {shell, app, name, version, platform, windowId, suite, store, portable}   store: a store package (the store updates it); portable: the zip (no updater, data beside the program)
@@ -23,6 +24,9 @@
  *   windows.focusHub()  windows.onChange(cb({type: opened|closed|focus, id}))      suite mode only (Studio; hub opens)
  *   windows.closeSelf()  (an app window closes itself; the hub is closed by the person)
  *   startLog {mark(stage), summary() → {windowBuiltMs, firstRequestMs, pageLoadedMs, moduleRunningMs, firstPaintMs, totalMs, …Budget}, text(previous)}  (0.10 PERF.18)
+ *   liveNet.open({protocol: modbus|mqtt|bacnet, host, port?}) → id   send(id, bytes)   recv(id, waitMs) → Uint8Array   close(id)
+ *     read-only device sockets (0.11 XE.9, live_net.rs gates every byte; computers only)
+ *   sync.state({state, waiting, problems}) → the sync sign on the taskbar / dock (0.11 SCF.9; computers only; main window)
  *   popups.restore() → [block title]  the torn-off windows that were out when this window last closed (0.10 UI.4; computers only)
  *   windows.launchApps() → [slug] (each once)   windows.onLaunchApp(cb(slug))   hub only: the per-app shortcuts
  *     ("CadCraft", … in the Start menu / app menu, `--app=<slug>`, SD.6) open Studio straight into that app
@@ -381,6 +385,8 @@
     // 0.8 SU.1058 (strict vault locks): true when THIS call made the file (the OS decides), false when it existed; removeFile → true when one was removed
     createFileExclusive: async (path, data) => !!(await call('cc_create_file_exclusive', wire(bytesOf(data)), { headers: { 'x-cc-path': encodeURIComponent(String(path)) } })),
     removeFile: async (path) => !!(await call('cc_remove_file', { path: String(path) })),
+    // 0.11 ORS.27: this computer's name for the drawing lock ("Ada Park (DRAFT-07)"); '' when unknown
+    deviceName: async () => String((await call('cc_device_name')) || ''),
     stat: (path) => call('cc_stat', { path: String(path) }),
     listDir: (path) => call('cc_list_dir', { path: String(path) }),
     launchFiles: () => call('cc_launch_files'),
@@ -423,6 +429,16 @@
       connect: (host, port) => call('cc_plc_connect', { host: String(host || ''), port: Math.round(Number(port) || 0) }),
       exchange: (bytes) => call('cc_plc_exchange', { bytes: Array.from(bytes, (b) => b & 255) }),
       disconnect: () => call('cc_plc_disconnect'),
+    }),
+    // 0.8 XE.9, Studio side 0.11 (live_net.rs): read-only live data from plant and building devices. Studio opens the socket and checks
+    // every byte the page sends (Modbus reads 1 to 4; MQTT subscribe, never publish or a will; BACnet Who-Is and ReadProperty); the
+    // protocols are the page's own codecs (lib/live). A device off this computer and the private networks needs the person's yes in a
+    // Studio dialog. host "broadcast" = BACnet discovery. recv → bytes ([] = nothing yet); computers only.
+    liveNet: Object.freeze({
+      open: async (o = {}) => Number(await call('cc_live_net_open', { protocol: String(o.protocol || ''), host: String(o.host || ''), port: o.port == null ? null : Math.round(Number(o.port) || 0) })),
+      send: async (id, bytes) => { await call('cc_live_net_send', { id: Number(id), bytes: Array.from(bytes, (b) => b & 255) }); },
+      recv: async (id, waitMs = 1000) => Uint8Array.from((await call('cc_live_net_recv', { id: Number(id), waitMs: Math.max(1, Math.min(5000, Math.round(Number(waitMs) || 1000))) })) || []),
+      close: async (id) => !!(await call('cc_live_net_close', { id: Number(id) })),
     }),
     links: Object.freeze({
       launch: () => call('cc_links_launch'),
@@ -491,6 +507,16 @@
     popups: Object.freeze({
       restore: async () => { const l = await call('cc_popup_restore'); return Array.isArray(l) ? l.map(String) : []; },
     }),
+    // The sync state outside the page (0.11 SCF.9, sync_badge.rs): the page that runs the sync queue reports its summary and the
+    // shell shows it on the taskbar button (Windows: a dot), the dock (macOS: a number or "!") or the launcher (Linux: a count where
+    // the desktop has one). state: off | synced | saving | offline | signin | problem; waiting = saves not yet on the server,
+    // problems = conflicts + refused saves. Only the main window's report counts (false otherwise). Nothing shown while all is saved.
+    sync: Object.freeze({
+      state: async (o = {}) => {
+        const n = (v) => Math.max(0, Math.min(1e6, Math.floor(Number(v) || 0)));
+        return !!(await call('cc_sync_badge', { state: String(o.state || 'off'), waiting: n(o.waiting), problems: n(o.problems) }));
+      },
+    }),
     // 3D mice and MIDI controllers (0.8 ID.8, devices.rs; computers only). Bytes only, input only; the shell lists only multi-axis
     // controllers (HID usage page 1, usage 8). The page's assets/js/app-devices-studio.js turns this into navigator.hid and
     // navigator.requestMIDIAccess where the web view has neither. hidBlocked(): 3D mice this computer does not let the person
@@ -547,7 +573,9 @@
   if (flags.suite !== true) { delete bridge.windows; delete bridge.control; delete bridge.links; }
   if (flags.suite !== true || flags.live !== true || mobile) delete bridge.renderNodes;   // computers only (CU.7)
   if (flags.live !== true || mobile) delete bridge.scanners;   // computers with the mDNS code (scanner.rs is cfg(all(feature = "live", desktop)))
+  if (mobile) delete bridge.liveNet;  // device sockets on computers only (XE.9)
   if (mobile) delete bridge.engines;   // no outside programs on tablets (RE.3)
+  if (mobile) delete bridge.sync;     // no taskbar or dock sign for the one tablet window (SCF.9)
   if (mobile) delete bridge.popups;   // pop-ups are real windows on computers only (UI.4)
   if (mobile || flags.suite !== true) delete bridge.devices;   // Studio on computers only (ID.8; devices.rs is cfg(desktop))
   if (flags.suite !== true || flags.live !== true) delete bridge.live;

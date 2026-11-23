@@ -190,6 +190,8 @@ pub struct Updates {
     prefs_file: Option<PathBuf>,
     prefs: Mutex<Prefs>,
     busy: Mutex<bool>,
+    /// 0.11 FX.138: running inside a Flatpak (Settings › Updates says Flatpak updates this copy).
+    flatpak: bool,
 }
 
 #[derive(Serialize)]
@@ -211,6 +213,8 @@ pub struct UpdateStatus {
     platform: &'static str,
     busy: bool,
     last: Option<LastCheck>,
+    /// 0.11 FX.138: inside a Flatpak sandbox (the edition then reads "flatpak"): Flatpak updates this copy, not Studio.
+    flatpak: bool,
 }
 
 fn now_ms() -> u64 {
@@ -239,7 +243,7 @@ impl Updates {
         #[cfg(not(windows))]
         let route = None;
         let prefs = prefs_file.as_ref().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        Updates { cfg, source, route, prefs_file, prefs: Mutex::new(prefs), busy: Mutex::new(false) }
+        Updates { cfg, source, route, prefs_file, prefs: Mutex::new(prefs), busy: Mutex::new(false), flatpak }
     }
     /// Automatic checks are ours for every edition with our endpoint behind it: feed, notify and the website MSIX (App
     /// Installer reads the same service). The Store package follows the Store; a sideloaded package has no source.
@@ -293,6 +297,10 @@ impl Updates {
         }
     }
     fn edition(&self) -> String {
+        // 0.11 FX.138: the Flatpak repackages the .deb, whose shell.json says "linux": name what it really is.
+        if self.flatpak {
+            return "flatpak".into();
+        }
         let e = self.cfg.as_ref().map(|c| c.edition.clone()).unwrap_or_default();
         if let Some(e) = resolve_edition(&e, std::env::var_os("APPIMAGE").is_some()) {
             return e;
@@ -319,6 +327,7 @@ impl Updates {
             platform: match std::env::consts::OS { "macos" => "macos", "windows" => "windows", "linux" => "linux", o => if o.is_empty() { "unknown" } else { "other" } },
             busy: *self.busy.lock().unwrap(),
             last: self.prefs.lock().unwrap().last.clone(),
+            flatpak: self.flatpak,
         }
     }
 }
@@ -561,6 +570,9 @@ mod tests {
         assert_eq!(source_on(Some(&c), false, false, false), Some(Source::Feed), ".deb, AppImage and every other system: unchanged");
         let up = Updates::new_for(Some(c), false, None, true);
         assert!(up.source.is_none() && !up.auto(), "no source, so no automatic check either");
+        assert!(up.flatpak && up.edition() == "flatpak", "0.11 FX.138: Settings names the edition Flatpak");
+        let deb = Updates::new_for(Some(cfg("https://getcadcraft.com/x?edition=linux", "key", false)), false, None, false);
+        assert!(!deb.flatpak && deb.edition() != "flatpak", "a straight install keeps its own edition");
     }
 
     #[test]

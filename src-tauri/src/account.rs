@@ -345,6 +345,17 @@ pub fn cc_account_sign_out<R: Runtime>(app: AppHandle<R>, acct: State<'_, Accoun
 /// Paths a page may reach with the sign-in: the sync API, /api/v1/me and the caller's own picture (SI.7), and Studio Live's
 /// invite links and signed-in names (LV.23, LV.19). All are sync-scope on the site; nothing else (library, account, team,
 /// billing, admin) is reachable from a page, whatever its query string.
+/// `/addons/package/<id>/<version>`, the shapes the site's rewrite takes (.htaccess: id `[a-z][a-z0-9.-]{1,63}`, version
+/// `[0-9][0-9A-Za-z.+-]{4,60}`); nothing after it.
+fn addon_package_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/addons/package/") else { return false };
+    let mut parts = rest.split('/');
+    let (Some(id), Some(v), None) = (parts.next(), parts.next(), parts.next()) else { return false };
+    let id_ok = (2..=64).contains(&id.len()) && id.as_bytes()[0].is_ascii_lowercase() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
+    let v_ok = (5..=61).contains(&v.len()) && v.as_bytes()[0].is_ascii_digit() && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'));
+    id_ok && v_ok
+}
+
 pub fn cloud_path_allowed(path: &str) -> bool {
     let exact_or_query = |p: &str| path == p || path.strip_prefix(p).is_some_and(|r| r.starts_with('?'));
     (path.starts_with("/api/v1/sync/")
@@ -354,7 +365,12 @@ pub fn cloud_path_allowed(path: &str) -> bool {
         // 0.8 AC.3: the hosted connector's two calls (a ticket for the relay, and the person's settings); the device token stays on this side
         || ["session", "settings"].iter().any(|x| exact_or_query(&format!("/api/v1/connect/studio/{x}")))
         // 0.8 LC.2: comments, notifications, the team model and shared lines of a cloud drawing (sync-scope on the site)
-        || ["comments", "notifications", "model", "lines"].iter().any(|x| exact_or_query(&format!("/api/v1/team/{x}"))))
+        || ["comments", "notifications", "model", "lines"].iter().any(|x| exact_or_query(&format!("/api/v1/team/{x}")))
+        // 0.11 AK.1: the account's add-on list and its packages, so a packed Studio page adds an add-on with Studio's own sign-in
+        // (no second sign-in, no token in the page); the site takes a sync-scope token on all three (ApiTokens SYNC_PATHS, addons/package.php)
+        || exact_or_query("/api/v1/account/addons")
+        || exact_or_query("/api/v1/account/addons/merge")
+        || addon_package_path(path))
         && !path.contains("..")
         && !path.contains('#')
         && !path.contains('\\')
@@ -446,11 +462,14 @@ mod tests {
         for ok in ["/api/v1/me", "/api/v1/me?x=1", "/api/v1/sync/status", "/api/v1/me/avatar", "/api/v1/me/avatar?size=64",
             "/api/v1/live/check?app=cadcraft", "/api/v1/live/rooms", "/api/v1/live/end", "/api/v1/live/assertion",
             "/api/v1/connect/studio/session", "/api/v1/connect/studio/settings", "/api/v1/connect/studio/settings?x=1",
-            "/api/v1/team/comments?drawing=x", "/api/v1/team/notifications", "/api/v1/team/model?project=x", "/api/v1/team/lines"] {
+            "/api/v1/team/comments?drawing=x", "/api/v1/team/notifications", "/api/v1/team/model?project=x", "/api/v1/team/lines",
+            "/api/v1/account/addons", "/api/v1/account/addons?edition=desktop&app=cadcraft", "/api/v1/account/addons/merge", "/addons/package/own-ai-key/0.11.0"] {
             assert!(cloud_path_allowed(ok), "{ok}");
         }
         for no in ["/api/v1/men", "/api/v1/me/avatars", "/api/v1/live/relay/host", "/api/v1/live/rooms/../../admin",
-            "/api/v1/library/items", "/api/v1/me/avatar%2f..", "/api/v1/connect/relay/verify", "/api/v1/connect/studio/", "/api/v1/connect/studio/other", "/oauth/token", "/api/v1/live/keys", "/api/v1/sync/x#y", "/api/v1/me/ x", "/api/v1/team/", "/api/v1/team/other", "/api/v1/team/comments/../x", "/api/v1/team/commentsx"] {
+            "/api/v1/library/items", "/api/v1/me/avatar%2f..", "/api/v1/connect/relay/verify", "/api/v1/connect/studio/", "/api/v1/connect/studio/other", "/oauth/token", "/api/v1/live/keys", "/api/v1/sync/x#y", "/api/v1/me/ x", "/api/v1/team/", "/api/v1/team/other", "/api/v1/team/comments/../x", "/api/v1/team/commentsx",
+            "/api/v1/account/addonsx", "/api/v1/account/addons/other", "/api/v1/account/database", "/addons/package/own-ai-key", "/addons/package/own-ai-key/0.11.0/x",
+            "/addons/package/Own/0.11.0", "/addons/package/own-ai-key/v1.0.0", "/addons/package/../admin/0.11.0", "/addons/own-ai-key"] {
             assert!(!cloud_path_allowed(no), "{no}");
         }
     }

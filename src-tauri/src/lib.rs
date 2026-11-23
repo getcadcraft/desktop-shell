@@ -57,12 +57,17 @@ mod engines;
 // A Modbus TCP socket on this computer for the Material flow add-on's PLC emulation (0.8 SU.858 step 5): plc.rs, std-only core tested alone.
 #[cfg(desktop)]
 mod plc;
+// Live plant and building data, read only (0.8 XE.9, Studio side 0.11): Modbus TCP, MQTT, BACnet/IP through a gated pipe; the codecs are the page's (lib/live).
+#[cfg(desktop)]
+mod live_net;
 // 3D mice and MIDI controllers for the page layer's WebHID / Web MIDI doors (0.8 ID.8): devices.rs, bytes only, input only.
 #[cfg(desktop)]
 mod devices;
 // Torn-off windows remembered per monitor and offered back at start (0.10 UI.4): popup_places.rs (std-only core), glue in windows.rs.
 #[cfg(desktop)]
 mod popup_places;
+// The sync state on the taskbar button / dock icon (0.11 SCF.9): sync_badge.rs (std-only), the command in windows.rs.
+mod sync_badge;
 #[cfg(desktop)]
 mod updates;
 mod windows;
@@ -353,6 +358,7 @@ pub fn run() {
             #[cfg(desktop)]
             carry::cc_carry_done,
             cc_info,
+            cc_device_name,
             cc_set_fullscreen,
             cc_is_fullscreen,
             cc_account_window,
@@ -456,10 +462,19 @@ pub fn run() {
             #[cfg(desktop)]
             plc::cc_plc_disconnect,
             #[cfg(desktop)]
+            live_net::cc_live_net_open,
+            #[cfg(desktop)]
+            live_net::cc_live_net_send,
+            #[cfg(desktop)]
+            live_net::cc_live_net_recv,
+            #[cfg(desktop)]
+            live_net::cc_live_net_close,
+            #[cfg(desktop)]
             windows::cc_popup_restore,
             windows::cc_startlog_mark,
             windows::cc_startlog_summary,
             windows::cc_startlog_text,
+            windows::cc_sync_badge,
             #[cfg(desktop)]
             devices::cc_hid_list,
             #[cfg(desktop)]
@@ -583,6 +598,8 @@ pub fn run() {
             #[cfg(desktop)]
             app.manage(plc::Client::default());
             #[cfg(desktop)]
+            app.manage(live_net::Live::default());
+            #[cfg(desktop)]
             app.manage(devices::Devices::default());
             #[cfg(desktop)]
             app.manage(popup_places::PopupState::new(portable::data_file(app.handle(), "popup-windows.txt")));
@@ -600,8 +617,11 @@ pub fn run() {
             // Read by bridge.js before it builds window.cadcraftDesktop (only these flags; no secrets). `mobile`: one web
             // view, apps as views inside it (bridge.js). `nativeFullscreen` (macOS, GH.1): the page's full screen is the
             // window's own full screen, not WKWebView's element fullscreen (bridge.js nativeFullscreen).
+            // 0.11 AK.1: `window.ccEdition` = the add-on Library's word for this copy (AddonLibrary::EDITIONS), set before the page
+            // scripts so the packed pages' account add-on client (app-addons-account-mount.js) knows where it runs and wakes up.
+            let edition = add_on_edition(cfg.store);
             let flags = format!(
-                "window.__ccShellFlags=Object.freeze({{account:{account_on},suite:{},live:{},mobile:{},nativeFullscreen:{}}});",
+                "window.__ccShellFlags=Object.freeze({{account:{account_on},suite:{},live:{},mobile:{},nativeFullscreen:{}}});window.ccEdition=window.ccEdition||\"{edition}\";",
                 cfg.suite,
                 cfg!(feature = "live"),
                 cfg!(mobile),
@@ -959,6 +979,33 @@ fn cc_info(app: AppHandle, window: tauri::WebviewWindow, cfg: tauri::State<'_, S
         "portable": cfg.portable,
         "mobile": cfg!(mobile),
     })
+}
+
+/// 0.11 AK.1: the add-on Library's edition word for this copy (getcadcraft.com AddonLibrary::EDITIONS): a store package says which
+/// store (Microsoft Store, the App Store on iPad / iPhone and the Mac App Store, Google Play); every other copy of Studio is "desktop"
+/// ("Studio from getcadcraft.com"), the website's Android APK included.
+fn add_on_edition(store: bool) -> &'static str {
+    if cfg!(target_os = "ios") || (store && cfg!(target_os = "macos")) {
+        "apple_store"
+    } else if store && cfg!(windows) {
+        "ms_store"
+    } else if store && cfg!(target_os = "android") {
+        "android_store"
+    } else {
+        "desktop"
+    }
+}
+
+/// 0.11 ORS.27: this computer's name, for the drawing lock's "Ada Park (DRAFT-07)" (drawing-lock-ui.js calls
+/// `desktop.deviceName()` when it exists). The same name the sign-in gives the account's device list: letters, digits,
+/// "-" and "." only, at most 40; empty when unknown. Tablets: the device's own name.
+#[tauri::command]
+fn cc_device_name() -> String {
+    #[cfg(mobile)]
+    let n = mobile::device_name();
+    #[cfg(not(mobile))]
+    let n = account::hostname();
+    n
 }
 
 /// The page entered or left element fullscreen: the window follows, so it covers the screen (WebView2 alone would only

@@ -437,6 +437,39 @@ pub fn cc_startlog_text(previous: Option<bool>) -> String {
     startlog::text(previous.unwrap_or(false))
 }
 
+// ---- 0.11 SCF.9: the sync state on the taskbar button / dock icon (sync_badge.rs) ------------------------------------------------
+
+/// The page that runs the sync queue reports its summary; the main window's taskbar button (Windows overlay dot), the dock
+/// (macOS label) or the launcher (Linux count) shows it. Only the main window's report counts (`false` otherwise); each call
+/// replaces the last, and `off` / `synced` clear every sign. Tablets: nothing (the system shows no such sign for one app).
+#[tauri::command]
+pub fn cc_sync_badge<R: Runtime>(app: AppHandle<R>, caller: WebviewWindow<R>, state: String, waiting: Option<u32>, problems: Option<u32>) -> bool {
+    use crate::sync_badge::{badge, reporter_ok, SyncState};
+    if !reporter_ok(caller.label()) {
+        return false;
+    }
+    let b = badge(SyncState::parse(&state), waiting.unwrap_or(0), problems.unwrap_or(0));
+    #[cfg(desktop)]
+    {
+        let Some(w) = app.get_webview_window("main") else { return false };
+        #[cfg(target_os = "macos")]
+        let _ = w.set_badge_label(b.label.clone());
+        #[cfg(target_os = "linux")]
+        let _ = w.set_badge_count(b.count);
+        #[cfg(windows)]
+        {
+            const SIZE: u32 = 16;
+            let rgba = b.dot.map(|d| crate::sync_badge::dot_rgba(d, SIZE));
+            let _ = w.set_overlay_icon(rgba.as_deref().map(|px| tauri::image::Image::new(px, SIZE, SIZE)));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+        let _ = (&w, &b);
+    }
+    #[cfg(mobile)]
+    let _ = (app, b);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

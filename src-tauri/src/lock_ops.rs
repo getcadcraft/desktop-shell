@@ -33,6 +33,22 @@ pub fn create_exclusive(p: &Path, bytes: &[u8]) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 0.11 ORS.27: a drawing's own lock file is the drawing's whole name plus `.cclock` (`Plan.dwg` → `Plan.dwg.cclock`,
+/// drawing-lock.js `lockPathFor`). Given a normalised path, → the drawing it locks, when it is one: the `.cclock` ending in
+/// any case (paths are case-folded on Windows and macOS), something before it, and not a bare separator. Grants::allows
+/// lets the page reach this one sibling of a file the person opened, nothing else beside it.
+pub fn lock_target(n: &str) -> Option<&str> {
+    const END: &str = ".cclock";
+    if n.len() <= END.len() || !n.is_char_boundary(n.len() - END.len()) {
+        return None;
+    }
+    let (base, end) = n.split_at(n.len() - END.len());
+    if !end.eq_ignore_ascii_case(END) || base.ends_with(['/', '\\']) || base.is_empty() {
+        return None;
+    }
+    Some(base)
+}
+
 /// Delete one file. → Ok(true) when something was removed, Ok(false) when there was no such file. A folder is refused.
 pub fn remove_one(p: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(p) {
@@ -94,6 +110,19 @@ mod tests {
         assert!(remove_one(&d).unwrap_err().starts_with("not_a_file"));
         assert!(d.exists());
         std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn a_drawings_lock_names_its_drawing() {
+        assert_eq!(lock_target("/jobs/Plan.dwg.cclock"), Some("/jobs/Plan.dwg"));
+        assert_eq!(lock_target("c:\\jobs\\plan.dwg.cclock"), Some("c:\\jobs\\plan.dwg"));
+        assert_eq!(lock_target("/jobs/Plan.dxf.CCLOCK"), Some("/jobs/Plan.dxf"));
+        assert_eq!(lock_target("/jobs/Plan.dwg"), None);
+        assert_eq!(lock_target(".cclock"), None);
+        assert_eq!(lock_target("/jobs/.cclock"), None);
+        assert_eq!(lock_target("/jobs/Plan.dwg.cclock.tmp"), None);
+        assert_eq!(lock_target("/jobs/Plan.dwgcclock"), None);
+        assert_eq!(lock_target("/j/é.cclock"), Some("/j/é"));
     }
 
     #[test]

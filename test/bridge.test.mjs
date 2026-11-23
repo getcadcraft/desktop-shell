@@ -577,6 +577,46 @@ ok(calls.some((c) => c.cmd === 'cc_set_fullscreen' && c.args.on === true), 'full
   ok(['windows::cc_popup_restore,', 'windows::cc_startlog_mark,', 'windows::cc_startlog_summary,', 'windows::cc_startlog_text,'].every((c) => lib.includes(c)), 'the four commands are registered in lib.rs');
 }
 
+// 0.11 ORS.27: the drawing lock's two shell needs — the computer's name, and the lock file beside an opened drawing.
+{
+  console.log('cadcraftDesktop.deviceName / the drawing lock beside a granted file / sync.state');
+  const src = fs.readFileSync(path.join(HERE, '../bridge/bridge.js'), 'utf8');
+  const mk = (answers = {}) => {
+    const calls = [];
+    const w = { __TAURI_INTERNALS__: { invoke: async (cmd, args) => { calls.push([cmd, args]); return answers[cmd]; } }, __ccShellFlags: { suite: true } };
+    w.top = w;
+    vm.runInContext(src, vm.createContext({ window: w, document: { addEventListener() {} }, Uint8Array, ArrayBuffer, DataView, Error, TypeError, Object, Array, String, JSON, encodeURIComponent, TextEncoder, TextDecoder, Math, Number, setTimeout, setInterval, clearInterval, Promise }));
+    return { b: w.cadcraftDesktop, calls };
+  };
+  const { b, calls } = mk({ cc_device_name: 'DRAFT-07' });
+  ok(typeof b.deviceName === 'function' && (await b.deviceName()) === 'DRAFT-07' && calls.some((c) => c[0] === 'cc_device_name'), 'deviceName() asks the shell and answers its name');
+  ok((await mk({ cc_device_name: null }).b.deviceName()) === '', 'no name: an empty string, never null');
+  const lib = fs.readFileSync(path.join(HERE, '../src-tauri/src/lib.rs'), 'utf8');
+  ok(/\n\s+cc_device_name,\n/.test(lib) && /fn cc_device_name\(\) -> String/.test(lib), 'cc_device_name is registered in lib.rs');
+  const files = fs.readFileSync(path.join(HERE, '../src-tauri/src/files.rs'), 'utf8');
+  {
+    const r = mk({ cc_sync_badge: true });
+    ok(r.b.sync && Object.isFrozen(r.b.sync) && (await r.b.sync.state({ state: 'saving', waiting: 3.7, problems: -2 })) === true, 'sync.state() reaches the shell (0.11 SCF.9)');
+    const c = r.calls.find((x) => x[0] === 'cc_sync_badge');
+    ok(c && c[1].state === 'saving' && c[1].waiting === 3 && c[1].problems === 0, 'numbers are whole and never negative');
+    await r.b.sync.state();
+    ok(r.calls.filter((x) => x[0] === 'cc_sync_badge')[1][1].state === 'off', 'no state = off (clears the sign)');
+    ok(/if \(mobile\) delete bridge\.sync/.test(src) && /windows::cc_sync_badge,/.test(lib) && /mod sync_badge;/.test(lib), 'registered in lib.rs; none on tablets');
+  }
+  {
+    const r = mk({ cc_live_net_open: 7, cc_live_net_recv: [1, 2, 300], cc_live_net_close: true });
+    ok(r.b.liveNet && Object.isFrozen(r.b.liveNet) && (await r.b.liveNet.open({ protocol: 'modbus', host: '192.168.1.20' })) === 7, 'liveNet.open() answers the connection id (0.11 XE.9)');
+    await r.b.liveNet.send(7, [0, 1, 256 + 3]);
+    const got = await r.b.liveNet.recv(7, 99999);
+    ok(got instanceof Uint8Array && got.join() === '1,2,44', 'recv gives bytes');
+    const by = (c) => r.calls.find((x) => x[0] === c)[1];
+    ok(by('cc_live_net_open').port === null && by('cc_live_net_send').bytes.join() === '0,1,3' && by('cc_live_net_recv').waitMs === 5000, 'no port = the protocol default; bytes are bytes; the wait is at most 5 s');
+    ok(/if \(mobile\) delete bridge\.liveNet/.test(src) && ['live_net::cc_live_net_open,', 'live_net::cc_live_net_send,', 'live_net::cc_live_net_recv,', 'live_net::cc_live_net_close,'].every((c) => lib.includes(c)) && /app\.manage\(live_net::Live::default\(\)\)/.test(lib), 'registered in lib.rs with its state; none on tablets');
+  }
+  ok(/window\.ccEdition=window\.ccEdition\|\|/.test(lib) && /fn add_on_edition\(store: bool\)/.test(lib) && ['"desktop"', '"ms_store"', '"apple_store"', '"android_store"'].every((w) => lib.includes(w)), 'the flags script sets window.ccEdition before the page scripts (0.11 AK.1; the Library\'s edition words)');
+  ok(/lock_ops::lock_target\(&n\)\.is_some_and\(\|base\| l\.files\.iter\(\)\.any\(\|f\| f == base\)\)/.test(files), 'Grants::allows lets a granted file\'s own .cclock through (and only a granted FILE: folders already cover their contents)');
+}
+
 // The Scan button's network scanners (Super 0.1, scanner.rs): browse() and request() over the shell's framed answer
 // [status u16][header length u32][headers JSON][body]; only where the live feature (mDNS) is in, never on tablets.
 {
